@@ -6,11 +6,14 @@ import {
   cmdLinkAdd,
   cmdLinkRm,
   cmdLinks,
+  cmdLogin,
+  cmdLogout,
   cmdLs,
   cmdOpen,
   cmdRm,
   cmdStats,
   cmdUpload,
+  cmdWhoami,
 } from './commands.js';
 
 const program = new Command();
@@ -22,6 +25,16 @@ program
 
 const accessHelp =
   'access mode: public | passcode | org (org needs --domains; passcode needs --passcode)';
+
+program
+  .command('login')
+  .description('Log in with email + password to manage your whole account')
+  .option('-e, --email <email>', 'account email (otherwise prompted)')
+  .option('-p, --password <password>', 'account password (otherwise prompted; or CLOUDBTL_PASSWORD)')
+  .action(cmdLogin);
+
+program.command('logout').description('Clear the saved session').action(cmdLogout);
+program.command('whoami').description('Show the logged-in account').action(cmdWhoami);
 
 program
   .command('upload')
@@ -94,6 +107,7 @@ async function main(): Promise<void> {
   } catch (e) {
     if (e instanceof ApiClientError) {
       console.error(err(`✗ ${e.message}`) + (e.status ? ` (HTTP ${e.status})` : ''));
+      if (e.status === 401) console.error(err('  Session expired or missing — run "cloudbtl login".'));
     } else if (e instanceof Error) {
       console.error(err(`✗ ${e.message}`));
     } else {

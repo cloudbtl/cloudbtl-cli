@@ -11,9 +11,16 @@ export interface TrackedProposal {
   createdAt: string;
 }
 
+export interface Session {
+  cookie: string;
+  email: string;
+  savedAt: string;
+}
+
 export interface CliConfig {
   apiBase: string;
   proposals: TrackedProposal[];
+  session?: Session;
 }
 
 const DEFAULT_API_BASE = 'https://cloudbtl.com';
@@ -34,6 +41,7 @@ export async function loadConfig(): Promise<CliConfig> {
     return {
       apiBase: (parsed.apiBase || DEFAULT_API_BASE).replace(/\/+$/, ''),
       proposals: Array.isArray(parsed.proposals) ? parsed.proposals : [],
+      session: parsed.session,
     };
   } catch {
     return { apiBase: DEFAULT_API_BASE, proposals: [] };
@@ -47,6 +55,12 @@ export async function saveConfig(config: CliConfig): Promise<void> {
 
 export function configFilePath(): string {
   return configPath();
+}
+
+export async function setSession(session: Session | undefined): Promise<void> {
+  const config = await loadConfig();
+  config.session = session;
+  await saveConfig(config);
 }
 
 export async function rememberProposal(p: TrackedProposal): Promise<void> {

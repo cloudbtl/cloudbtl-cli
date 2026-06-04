@@ -9,6 +9,39 @@ export interface ApiError {
   message?: string | string[];
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  emailVerified: boolean;
+}
+
+export interface AuthResponse {
+  ok: true;
+  user: AuthUser;
+}
+
+export interface MeResponse {
+  ok: true;
+  user: AuthUser | null;
+}
+
+export interface MyProposalsResponse {
+  ok: true;
+  proposals: {
+    id: string;
+    title: string;
+    originalFilename: string;
+    fileSize: number;
+    createdAt: string;
+    links: number;
+    opens: number;
+    visitors: number;
+    totalMs: number;
+    dashboardUrl: string;
+  }[];
+}
+
 export interface CreateProposalResponse {
   ok: true;
   proposal: {

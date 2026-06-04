@@ -1,13 +1,15 @@
 import { spawn } from 'node:child_process';
 import { access as fsAccess } from 'node:fs/promises';
+import readline from 'node:readline';
 import { Api, type AccessConfig } from './api.js';
 import {
+  type CliConfig,
   configFilePath,
   forgetProposal,
   loadConfig,
   rememberProposal,
-  resolveProposal,
   saveConfig,
+  setSession,
 } from './config.js';
 import { accessLabel, bold, dim, fmtDate, fmtMs, ok, table, warn } from './format.js';
 
@@ -16,6 +18,17 @@ export interface AccessOpts {
   domains?: string;
   passcode?: string;
   download?: boolean;
+}
+
+interface DocRef {
+  id: string;
+  ownerKey: string;
+  title: string;
+  dashboardUrl: string;
+}
+
+function apiFor(config: CliConfig): Api {
+  return new Api(config.apiBase, config.session?.cookie);
 }
 
 function buildAccess(opts: AccessOpts): AccessConfig {
@@ -40,14 +53,112 @@ function buildAccess(opts: AccessOpts): AccessConfig {
   };
 }
 
+/** Source of documents: the logged-in account (server) when a session exists, else the local registry. */
+async function listDocs(config: CliConfig, api: Api): Promise<DocRef[]> {
+  if (config.session) {
+    const { proposals } = await api.myProposals();
+    return proposals.map((p) => ({ id: p.id, ownerKey: '', title: p.title, dashboardUrl: p.dashboardUrl }));
+  }
+  return config.proposals.map((p) => ({
+    id: p.id,
+    ownerKey: p.ownerKey,
+    title: p.title,
+    dashboardUrl: p.dashboardUrl,
+  }));
+}
+
+function pickDoc(list: DocRef[], ref: string): DocRef {
+  if (/^\d+$/.test(ref)) {
+    const hit = list[Number(ref) - 1];
+    if (!hit) throw new Error(`No document at index ${ref}. Run "cloudbtl ls".`);
+    return hit;
+  }
+  const exact = list.find((d) => d.id === ref);
+  if (exact) return exact;
+  const matches = list.filter((d) => d.id.startsWith(ref));
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length > 1) throw new Error(`"${ref}" is ambiguous; matches ${matches.length} documents.`);
+  throw new Error(`"${ref}" is not a known document. Run "cloudbtl ls".`);
+}
+
+async function resolveDoc(config: CliConfig, api: Api, ref: string): Promise<DocRef> {
+  return pickDoc(await listDocs(config, api), ref);
+}
+
+// ---- auth ----
+
+function promptHidden(query: string): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const rlAny = rl as unknown as { _writeToOutput: (s: string) => void; output: NodeJS.WriteStream };
+    rlAny._writeToOutput = (str: string) => {
+      if (str.includes(query) || str === '\n' || str === '\r\n') rlAny.output.write(str);
+    };
+    rl.question(query, (value) => {
+      rl.close();
+      process.stdout.write('\n');
+      resolve(value);
+    });
+  });
+}
+
+function promptLine(query: string): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(query, (value) => {
+      rl.close();
+      resolve(value.trim());
+    });
+  });
+}
+
+export async function cmdLogin(opts: { email?: string; password?: string }): Promise<void> {
+  const config = await loadConfig();
+  const email = opts.email || (await promptLine('Email: '));
+  const password = opts.password || process.env.CLOUDBTL_PASSWORD || (await promptHidden('Password: '));
+  if (!email || !password) throw new Error('Email and password are required.');
+  const api = new Api(config.apiBase);
+  const { user, cookie } = await api.login(email, password);
+  await setSession({ cookie, email: user.email, savedAt: new Date().toISOString() });
+  console.log(ok('✓ Logged in as ') + bold(user.email) + dim(` (${config.apiBase})`));
+}
+
+export async function cmdLogout(): Promise<void> {
+  const config = await loadConfig();
+  if (!config.session) {
+    console.log(dim('Not logged in.'));
+    return;
+  }
+  await apiFor(config).logout();
+  await setSession(undefined);
+  console.log(ok('✓ Logged out.'));
+}
+
+export async function cmdWhoami(): Promise<void> {
+  const config = await loadConfig();
+  if (!config.session) {
+    console.log(dim('Not logged in. Run "cloudbtl login".'));
+    return;
+  }
+  const { user } = await apiFor(config).me();
+  if (!user) {
+    console.log(warn('Session expired. Run "cloudbtl login" again.'));
+    return;
+  }
+  console.log(`${bold(user.email)} ${dim(`(${user.name})`)} · ${config.apiBase}`);
+}
+
+// ---- documents ----
+
 export async function cmdUpload(file: string, opts: AccessOpts & { title?: string }): Promise<void> {
   await fsAccess(file).catch(() => {
     throw new Error(`File not found: ${file}`);
   });
   const config = await loadConfig();
-  const api = new Api(config.apiBase);
+  const api = apiFor(config);
   const access = buildAccess(opts);
   const { proposal } = await api.upload(file, opts.title, access);
+  // Track locally too (works whether or not you're logged in; the ownerKey is the anonymous fallback).
   await rememberProposal({
     id: proposal.id,
     ownerKey: new URL(proposal.dashboardUrl).searchParams.get('key') ?? '',
@@ -64,8 +175,27 @@ export async function cmdUpload(file: string, opts: AccessOpts & { title?: strin
 
 export async function cmdLs(): Promise<void> {
   const config = await loadConfig();
+  const api = apiFor(config);
+  if (config.session) {
+    const { proposals } = await api.myProposals();
+    if (proposals.length === 0) {
+      console.log(dim('No documents in your account yet.'));
+      return;
+    }
+    const rows = proposals.map((p, i) => [
+      String(i + 1),
+      p.id,
+      p.title.length > 36 ? p.title.slice(0, 35) + '…' : p.title,
+      String(p.links),
+      String(p.visitors),
+      String(p.opens),
+    ]);
+    console.log(table(['#', 'ID', 'TITLE', 'LINKS', 'VISITORS', 'OPENS'], rows));
+    console.log(dim(`\n${proposals.length} document(s) · ${config.session.email} · ${config.apiBase}`));
+    return;
+  }
   if (config.proposals.length === 0) {
-    console.log(dim('No tracked documents yet. Upload one with "cloudbtl upload <file>".'));
+    console.log(dim('No tracked documents. Upload one, or "cloudbtl login" to see your account.'));
     return;
   }
   const rows = config.proposals.map((p, i) => [
@@ -75,14 +205,14 @@ export async function cmdLs(): Promise<void> {
     fmtDate(p.createdAt),
   ]);
   console.log(table(['#', 'ID', 'TITLE', 'CREATED'], rows));
-  console.log(dim(`\n${config.proposals.length} document(s) · ${config.apiBase}`));
+  console.log(dim(`\n${config.proposals.length} document(s) · anonymous · ${config.apiBase}`));
 }
 
 export async function cmdLinks(ref: string): Promise<void> {
   const config = await loadConfig();
-  const p = resolveProposal(config, ref);
-  const api = new Api(config.apiBase);
-  const { summary } = await api.summary(p.id, p.ownerKey);
+  const api = apiFor(config);
+  const doc = await resolveDoc(config, api, ref);
+  const { summary } = await api.summary(doc.id, doc.ownerKey);
   if (summary.links.length === 0) {
     console.log(dim('This document has no share links.'));
     return;
@@ -100,10 +230,10 @@ export async function cmdLinks(ref: string): Promise<void> {
 
 export async function cmdLinkAdd(ref: string, opts: AccessOpts & { alias?: string }): Promise<void> {
   const config = await loadConfig();
-  const p = resolveProposal(config, ref);
-  const api = new Api(config.apiBase);
+  const api = apiFor(config);
+  const doc = await resolveDoc(config, api, ref);
   const access = buildAccess(opts);
-  const { link } = await api.createLink(p.id, p.ownerKey, { alias: opts.alias, ...access });
+  const { link } = await api.createLink(doc.id, doc.ownerKey, { alias: opts.alias, ...access });
   console.log(ok('✓ Link created') + ` ${dim(link.id)}`);
   console.log(`  access: ${accessLabel(link.accessMode)}${link.allowedDomains ? dim(` [${link.allowedDomains}]`) : ''}`);
   console.log(`  share:  ${link.shareUrl}`);
@@ -111,17 +241,17 @@ export async function cmdLinkAdd(ref: string, opts: AccessOpts & { alias?: strin
 
 export async function cmdLinkRm(ref: string, linkId: string): Promise<void> {
   const config = await loadConfig();
-  const p = resolveProposal(config, ref);
-  const api = new Api(config.apiBase);
-  await api.deleteLink(p.id, linkId, p.ownerKey);
+  const api = apiFor(config);
+  const doc = await resolveDoc(config, api, ref);
+  await api.deleteLink(doc.id, linkId, doc.ownerKey);
   console.log(ok('✓ Link deleted') + ` ${dim(linkId)}`);
 }
 
 export async function cmdStats(ref: string): Promise<void> {
   const config = await loadConfig();
-  const p = resolveProposal(config, ref);
-  const api = new Api(config.apiBase);
-  const { proposal, summary } = await api.summary(p.id, p.ownerKey);
+  const api = apiFor(config);
+  const doc = await resolveDoc(config, api, ref);
+  const { proposal, summary } = await api.summary(doc.id, doc.ownerKey);
   console.log(bold(proposal.title) + ` ${dim(`(${proposal.id})`)}`);
   console.log(
     `${summary.visitors} visitors · ${summary.sessions} opens · ${summary.events} events · ${summary.links.length} links\n`,
@@ -153,8 +283,9 @@ export async function cmdStats(ref: string): Promise<void> {
 
 export async function cmdOpen(ref: string): Promise<void> {
   const config = await loadConfig();
-  const p = resolveProposal(config, ref);
-  const url = p.dashboardUrl;
+  const api = apiFor(config);
+  const doc = await resolveDoc(config, api, ref);
+  const url = doc.dashboardUrl;
   const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
   spawn(cmd, [url], { stdio: 'ignore', detached: true, shell: process.platform === 'win32' }).unref();
   console.log(dim(`Opening ${url}`));
@@ -162,14 +293,14 @@ export async function cmdOpen(ref: string): Promise<void> {
 
 export async function cmdRm(ref: string, opts: { yes?: boolean }): Promise<void> {
   const config = await loadConfig();
-  const p = resolveProposal(config, ref);
+  const api = apiFor(config);
+  const doc = await resolveDoc(config, api, ref);
   if (!opts.yes) {
-    throw new Error(`This deletes "${p.title}" and all its links/stats on the server. Re-run with --yes to confirm.`);
+    throw new Error(`This deletes "${doc.title}" and all its links/stats on the server. Re-run with --yes to confirm.`);
   }
-  const api = new Api(config.apiBase);
-  await api.deleteProposal(p.id, p.ownerKey);
-  await forgetProposal(p.id);
-  console.log(ok('✓ Deleted') + ` ${p.title} ${dim(`(${p.id})`)}`);
+  await api.deleteProposal(doc.id, doc.ownerKey);
+  await forgetProposal(doc.id);
+  console.log(ok('✓ Deleted') + ` ${doc.title} ${dim(`(${doc.id})`)}`);
 }
 
 export async function cmdConfig(opts: { apiBase?: string }): Promise<void> {
@@ -182,5 +313,6 @@ export async function cmdConfig(opts: { apiBase?: string }): Promise<void> {
   }
   console.log(`apiBase:   ${config.apiBase}`);
   console.log(`config:    ${configFilePath()}`);
-  console.log(`tracked:   ${config.proposals.length} document(s)`);
+  console.log(`account:   ${config.session ? config.session.email : dim('not logged in')}`);
+  console.log(`tracked:   ${config.proposals.length} local document(s)`);
 }

@@ -2,10 +2,15 @@ import { basename, extname } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import type {
   ApiError,
+  AuthResponse,
   CreateProposalResponse,
   LinkResponse,
+  MeResponse,
+  MyProposalsResponse,
   ProposalSummaryResponse,
 } from './types.js';
+
+const SESSION_COOKIE = 'cloudbtl_session';
 
 export class ApiClientError extends Error {
   constructor(
@@ -30,6 +35,18 @@ function mimeFor(file: string): string {
   return 'application/octet-stream';
 }
 
+function extractSessionCookie(res: Response): string | null {
+  const cookies =
+    typeof res.headers.getSetCookie === 'function'
+      ? res.headers.getSetCookie()
+      : [res.headers.get('set-cookie') ?? ''];
+  for (const c of cookies) {
+    const m = c.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`));
+    if (m && m[1]) return m[1];
+  }
+  return null;
+}
+
 function errorMessage(data: unknown, status: number): string {
   if (data && typeof data === 'object') {
     const e = data as ApiError;
@@ -41,12 +58,44 @@ function errorMessage(data: unknown, status: number): string {
 }
 
 export class Api {
-  constructor(private readonly base: string) {}
+  constructor(
+    private readonly base: string,
+    private readonly sessionCookie?: string,
+  ) {}
 
   // The backend's same-origin guard compares Origin/Referer host to PUBLIC_BASE_URL,
   // so a first-party CLI must present a matching Origin on mutating requests.
   private headers(extra?: Record<string, string>): Record<string, string> {
-    return { Origin: this.base, Accept: 'application/json', ...extra };
+    const h: Record<string, string> = { Origin: this.base, Accept: 'application/json', ...extra };
+    if (this.sessionCookie) h['Cookie'] = `${SESSION_COOKIE}=${this.sessionCookie}`;
+    return h;
+  }
+
+  /** Logs in with email+password and returns the user plus the session cookie value to persist. */
+  async login(email: string, password: string): Promise<{ user: AuthResponse['user']; cookie: string }> {
+    const res = await fetch(`${this.base}/api/auth/login`, {
+      method: 'POST',
+      headers: this.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await this.parse<AuthResponse>(res);
+    const cookie = extractSessionCookie(res);
+    if (!cookie) throw new ApiClientError(res.status, 'Login succeeded but no session cookie was returned.');
+    return { user: data.user, cookie };
+  }
+
+  async logout(): Promise<void> {
+    await fetch(`${this.base}/api/auth/logout`, { method: 'POST', headers: this.headers() }).catch(() => {});
+  }
+
+  async me(): Promise<MeResponse> {
+    return this.parse<MeResponse>(await fetch(`${this.base}/api/me`, { headers: this.headers() }));
+  }
+
+  async myProposals(): Promise<MyProposalsResponse> {
+    return this.parse<MyProposalsResponse>(
+      await fetch(`${this.base}/api/me/proposals`, { headers: this.headers() }),
+    );
   }
 
   private async parse<T>(res: Response): Promise<T> {
