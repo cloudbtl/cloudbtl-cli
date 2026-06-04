@@ -115,23 +115,25 @@ function promptLine(query: string): Promise<string> {
 }
 
 export async function cmdLogin(opts: {
+  basic?: boolean;
   email?: string;
   password?: string;
-  google?: boolean;
 }): Promise<void> {
   const config = await loadConfig();
   const api = new Api(config.apiBase);
   let user: { email: string; name: string };
   let cookie: string;
 
-  if (opts.google) {
-    const clientId = config.googleClientId || process.env.CLOUDBTL_GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID;
-    ({ user, cookie } = await googleLogin(api, clientId));
-  } else {
+  // Google sign-in is the default; email+password is opt-in via --basic (or by passing -e/-p).
+  const useBasic = Boolean(opts.basic || opts.email || opts.password);
+  if (useBasic) {
     const email = opts.email || (await promptLine('Email: '));
     const password = opts.password || process.env.CLOUDBTL_PASSWORD || (await promptHidden('Password: '));
     if (!email || !password) throw new Error('Email and password are required.');
     ({ user, cookie } = await api.login(email, password));
+  } else {
+    const clientId = config.googleClientId || process.env.CLOUDBTL_GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID;
+    ({ user, cookie } = await googleLogin(api, clientId));
   }
 
   await setSession({ cookie, email: user.email, savedAt: new Date().toISOString() });

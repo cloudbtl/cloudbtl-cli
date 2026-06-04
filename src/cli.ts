@@ -28,10 +28,10 @@ const accessHelp =
 
 program
   .command('login')
-  .description('Log in to manage your whole account (email+password, or --google)')
-  .option('-g, --google', 'sign in with Google in the browser', false)
-  .option('-e, --email <email>', 'account email (otherwise prompted)')
-  .option('-p, --password <password>', 'account password (otherwise prompted; or CLOUDBTL_PASSWORD)')
+  .description('Log in with Google in the browser (default); use --basic for email + password')
+  .option('-b, --basic', 'log in with email + password instead of Google', false)
+  .option('-e, --email <email>', 'account email (implies --basic; otherwise prompted)')
+  .option('-p, --password <password>', 'account password (implies --basic; or CLOUDBTL_PASSWORD)')
   .action(cmdLogin);
 
 program.command('logout').description('Clear the saved session').action(cmdLogout);
