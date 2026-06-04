@@ -162,6 +162,14 @@ export class Api {
     await this.parse<{ ok: true }>(res);
   }
 
+  async claim(proposalId: string, ownerKey: string): Promise<void> {
+    const res = await fetch(`${this.base}/api/proposals/${proposalId}/claim?key=${encodeURIComponent(ownerKey)}`, {
+      method: 'POST',
+      headers: this.headers(),
+    });
+    await this.parse<{ ok: true }>(res);
+  }
+
   async deleteProposal(proposalId: string, ownerKey: string): Promise<void> {
     const res = await fetch(`${this.base}/api/proposals/${proposalId}?key=${encodeURIComponent(ownerKey)}`, {
       method: 'DELETE',

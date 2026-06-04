@@ -9,11 +9,12 @@ import {
   forgetProposal,
   loadConfig,
   rememberProposal,
+  resolveProposal,
   saveConfig,
   setSession,
 } from './config.js';
 import { googleLogin } from './google-login.js';
-import { accessLabel, bold, dim, fmtDate, fmtMs, ok, table, warn } from './format.js';
+import { accessLabel, bold, dim, err, fmtDate, fmtMs, ok, table, warn } from './format.js';
 
 export interface AccessOpts {
   access?: string;
@@ -318,6 +319,34 @@ export async function cmdRm(ref: string, opts: { yes?: boolean }): Promise<void>
   await api.deleteProposal(doc.id, doc.ownerKey);
   await forgetProposal(doc.id);
   console.log(ok('✓ Deleted') + ` ${doc.title} ${dim(`(${doc.id})`)}`);
+}
+
+export async function cmdClaim(ref: string | undefined): Promise<void> {
+  const config = await loadConfig();
+  if (!config.session) throw new Error('Log in first with "cloudbtl login", then claim.');
+  const api = apiFor(config);
+
+  let targets = config.proposals.filter((p) => p.ownerKey);
+  if (ref) {
+    const one = resolveProposal(config, ref);
+    targets = one.ownerKey ? [one] : [];
+  }
+  if (targets.length === 0) {
+    console.log(dim('Nothing to claim — no locally-tracked documents with an owner key.'));
+    return;
+  }
+
+  let done = 0;
+  for (const p of targets) {
+    try {
+      await api.claim(p.id, p.ownerKey);
+      done += 1;
+      console.log(ok('✓ claimed') + ` ${p.title} ${dim(`(${p.id})`)}`);
+    } catch (e) {
+      console.log(err(`✗ ${p.id}: ${e instanceof Error ? e.message : 'failed'}`));
+    }
+  }
+  console.log(dim(`\nClaimed ${done}/${targets.length} into ${config.session.email} — links extended to the 7-day tier.`));
 }
 
 export async function cmdConfig(opts: { apiBase?: string }): Promise<void> {

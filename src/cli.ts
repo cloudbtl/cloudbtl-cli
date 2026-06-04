@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { ApiClientError } from './api.js';
 import { err } from './format.js';
 import {
+  cmdClaim,
   cmdConfig,
   cmdLinkAdd,
   cmdLinkRm,
@@ -76,6 +77,12 @@ link
   .argument('<doc>', 'document id, ls index, or id prefix')
   .argument('<linkId>', 'the link id to delete')
   .action(cmdLinkRm);
+
+program
+  .command('claim')
+  .description('Claim locally-tracked anonymous uploads into your logged-in account (extends links to 7 days)')
+  .argument('[doc]', 'a specific document (id/index/prefix); omit to claim all tracked')
+  .action(cmdClaim);
 
 program
   .command('stats')
