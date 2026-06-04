@@ -1,0 +1,30 @@
+{
+  "name": "@cloudbtl/cli",
+  "version": "0.1.0",
+  "description": "Command-line client for cloudbtl.com — upload documents, manage share links, read analytics.",
+  "type": "module",
+  "bin": {
+    "cloudbtl": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.2"
+  }
+}
