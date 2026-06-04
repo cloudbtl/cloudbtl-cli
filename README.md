@@ -12,6 +12,27 @@ npm link          # makes `cloudbtl` available globally
 
 > Requires Node.js 18+ (uses the built-in `fetch`/`FormData`).
 
+## Login (optional, for account-wide management)
+
+```bash
+cloudbtl login --google     # sign in with Google in the browser (recommended)
+cloudbtl login              # or email + password (password accounts only)
+cloudbtl whoami
+cloudbtl logout
+```
+
+When logged in, `ls` lists your **whole account** and `links`/`stats`/`rm` work on any
+of your documents by id — no per-document key needed. Without logging in, the CLI still
+works anonymously: `upload` returns a key it stores locally, and `ls` shows only the
+documents this CLI uploaded.
+
+- `--google` opens a browser, you pick your Google account, and the CLI captures the
+  session. It serves a one-page sign-in on `http://localhost:5173` (an authorized origin
+  on the cloudbtl OAuth client). Set `CLOUDBTL_OAUTH_PORT` to use a different (authorized)
+  port, or `CLOUDBTL_NO_BROWSER=1` to print the URL instead of auto-opening.
+- Email/password login only works for accounts that have a password. If you only ever
+  "Sign in with Google" on the web, use `--google` here too.
+
 ## Usage
 
 ```bash

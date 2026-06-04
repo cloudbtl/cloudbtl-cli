@@ -4,6 +4,7 @@ import readline from 'node:readline';
 import { Api, type AccessConfig } from './api.js';
 import {
   type CliConfig,
+  DEFAULT_GOOGLE_CLIENT_ID,
   configFilePath,
   forgetProposal,
   loadConfig,
@@ -11,6 +12,7 @@ import {
   saveConfig,
   setSession,
 } from './config.js';
+import { googleLogin } from './google-login.js';
 import { accessLabel, bold, dim, fmtDate, fmtMs, ok, table, warn } from './format.js';
 
 export interface AccessOpts {
@@ -112,13 +114,26 @@ function promptLine(query: string): Promise<string> {
   });
 }
 
-export async function cmdLogin(opts: { email?: string; password?: string }): Promise<void> {
+export async function cmdLogin(opts: {
+  email?: string;
+  password?: string;
+  google?: boolean;
+}): Promise<void> {
   const config = await loadConfig();
-  const email = opts.email || (await promptLine('Email: '));
-  const password = opts.password || process.env.CLOUDBTL_PASSWORD || (await promptHidden('Password: '));
-  if (!email || !password) throw new Error('Email and password are required.');
   const api = new Api(config.apiBase);
-  const { user, cookie } = await api.login(email, password);
+  let user: { email: string; name: string };
+  let cookie: string;
+
+  if (opts.google) {
+    const clientId = config.googleClientId || process.env.CLOUDBTL_GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID;
+    ({ user, cookie } = await googleLogin(api, clientId));
+  } else {
+    const email = opts.email || (await promptLine('Email: '));
+    const password = opts.password || process.env.CLOUDBTL_PASSWORD || (await promptHidden('Password: '));
+    if (!email || !password) throw new Error('Email and password are required.');
+    ({ user, cookie } = await api.login(email, password));
+  }
+
   await setSession({ cookie, email: user.email, savedAt: new Date().toISOString() });
   console.log(ok('✓ Logged in as ') + bold(user.email) + dim(` (${config.apiBase})`));
 }

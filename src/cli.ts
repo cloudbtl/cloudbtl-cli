@@ -28,7 +28,8 @@ const accessHelp =
 
 program
   .command('login')
-  .description('Log in with email + password to manage your whole account')
+  .description('Log in to manage your whole account (email+password, or --google)')
+  .option('-g, --google', 'sign in with Google in the browser', false)
   .option('-e, --email <email>', 'account email (otherwise prompted)')
   .option('-p, --password <password>', 'account password (otherwise prompted; or CLOUDBTL_PASSWORD)')
   .action(cmdLogin);

@@ -21,9 +21,13 @@ export interface CliConfig {
   apiBase: string;
   proposals: TrackedProposal[];
   session?: Session;
+  googleClientId?: string;
 }
 
 const DEFAULT_API_BASE = 'https://cloudbtl.com';
+// Public web OAuth client id for cloudbtl.com (not a secret — also shipped in the web bundle).
+export const DEFAULT_GOOGLE_CLIENT_ID =
+  '237177333880-4jdhkdjvrhf9qquu64306gp1lo2mu4o1.apps.googleusercontent.com';
 
 function configDir(): string {
   const xdg = process.env.XDG_CONFIG_HOME;
@@ -42,6 +46,7 @@ export async function loadConfig(): Promise<CliConfig> {
       apiBase: (parsed.apiBase || DEFAULT_API_BASE).replace(/\/+$/, ''),
       proposals: Array.isArray(parsed.proposals) ? parsed.proposals : [],
       session: parsed.session,
+      googleClientId: parsed.googleClientId,
     };
   } catch {
     return { apiBase: DEFAULT_API_BASE, proposals: [] };

@@ -84,6 +84,19 @@ export class Api {
     return { user: data.user, cookie };
   }
 
+  /** Exchanges a Google ID token (credential) for a cloudbtl session via the existing /auth/google. */
+  async loginWithGoogle(credential: string): Promise<{ user: AuthResponse['user']; cookie: string }> {
+    const res = await fetch(`${this.base}/api/auth/google`, {
+      method: 'POST',
+      headers: this.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ credential }),
+    });
+    const data = await this.parse<AuthResponse>(res);
+    const cookie = extractSessionCookie(res);
+    if (!cookie) throw new ApiClientError(res.status, 'Google sign-in succeeded but no session cookie was returned.');
+    return { user: data.user, cookie };
+  }
+
   async logout(): Promise<void> {
     await fetch(`${this.base}/api/auth/logout`, { method: 'POST', headers: this.headers() }).catch(() => {});
   }
