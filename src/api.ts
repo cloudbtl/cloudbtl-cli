@@ -117,11 +117,12 @@ export class Api {
     return data as T;
   }
 
-  async upload(filePath: string, title: string | undefined, access: AccessConfig): Promise<CreateProposalResponse> {
+  async upload(filePath: string, title: string | undefined, access: AccessConfig, projectCode?: string): Promise<CreateProposalResponse> {
     const buf = await readFile(filePath);
     const form = new FormData();
     form.append('pdf', new Blob([buf], { type: mimeFor(filePath) }), basename(filePath));
     if (title) form.append('title', title);
+    if (projectCode) form.append('projectCode', projectCode);
     form.append('accessMode', access.accessMode);
     if (access.accessMode === 'org' && access.allowedDomains) form.append('allowedDomains', access.allowedDomains);
     if (access.accessCode) form.append('accessCode', access.accessCode);

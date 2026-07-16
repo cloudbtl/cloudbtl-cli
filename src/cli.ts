@@ -43,6 +43,7 @@ program
   .description('Upload a PDF/HTML document and create its first share link')
   .argument('<file>', 'path to a .pdf or .html file')
   .option('-t, --title <title>', 'document title (defaults to the filename)')
+  .option('--project <code>', 'group the document under a project (subdomain workspaces only)')
   .option('-a, --access <mode>', accessHelp, 'public')
   .option('-d, --domains <list>', 'comma-separated allowed email domains (for --access org)')
   .option('-p, --passcode <code>', 'passcode (for --access passcode, or org fallback)')

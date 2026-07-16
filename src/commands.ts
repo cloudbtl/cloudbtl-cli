@@ -168,14 +168,14 @@ export async function cmdWhoami(): Promise<void> {
 
 // ---- documents ----
 
-export async function cmdUpload(file: string, opts: AccessOpts & { title?: string }): Promise<void> {
+export async function cmdUpload(file: string, opts: AccessOpts & { title?: string; project?: string }): Promise<void> {
   await fsAccess(file).catch(() => {
     throw new Error(`File not found: ${file}`);
   });
   const config = await loadConfig();
   const api = apiFor(config);
   const access = buildAccess(opts);
-  const { proposal } = await api.upload(file, opts.title, access);
+  const { proposal } = await api.upload(file, opts.title, access, opts.project);
   // Track locally too (works whether or not you're logged in; the ownerKey is the anonymous fallback).
   await rememberProposal({
     id: proposal.id,
