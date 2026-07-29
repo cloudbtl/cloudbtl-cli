@@ -57,9 +57,28 @@ cloudbtl open 1
 cloudbtl rm 1 --yes
 ```
 
+## Headless auth (agents / CI) — API tokens
+
+For environments without a browser (LLM agents, CI), use a personal API token:
+
+```bash
+# once, on a machine where you CAN log in with the browser:
+cloudbtl login --google
+cloudbtl token create -n my-agent      # prints cbtl_… secret ONCE
+
+# on the headless machine:
+cloudbtl login --token cbtl_xxxxxxxx   # verifies + stores it
+# or keep it out of the config file entirely:
+CLOUDBTL_TOKEN=cbtl_xxxxxxxx cloudbtl upload deck.pdf
+```
+
+- The token carries your full account permissions (no scopes yet). Revoke with
+  `cloudbtl token rm <tok_…>`; list with `cloudbtl token ls`.
+- Works with tenant workspaces too — set `config --api-base` to the tenant host first.
+
 ## How it works / auth
 
-cloudbtl.com has no API-token auth yet. The CLI uses the platform's existing model:
+The CLI uses the platform's existing model:
 
 - **Upload** is anonymous and returns an `ownerKey` for the document.
 - The CLI stores `{ id, ownerKey, … }` in `~/.config/cloudbtl/config.json` (mode `600`) and uses the `ownerKey` to manage links and read analytics.

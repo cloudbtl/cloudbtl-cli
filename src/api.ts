@@ -61,13 +61,16 @@ export class Api {
   constructor(
     private readonly base: string,
     private readonly sessionCookie?: string,
+    private readonly apiToken?: string,
   ) {}
 
   // The backend's same-origin guard compares Origin/Referer host to PUBLIC_BASE_URL,
   // so a first-party CLI must present a matching Origin on mutating requests.
   private headers(extra?: Record<string, string>): Record<string, string> {
     const h: Record<string, string> = { Origin: this.base, Accept: 'application/json', ...extra };
-    if (this.sessionCookie) h['Cookie'] = `${SESSION_COOKIE}=${this.sessionCookie}`;
+    // API 토큰(cbtl_…)이 있으면 Bearer 우선 — 헤드리스(에이전트/CI) 경로.
+    if (this.apiToken) h['Authorization'] = `Bearer ${this.apiToken}`;
+    else if (this.sessionCookie) h['Cookie'] = `${SESSION_COOKIE}=${this.sessionCookie}`;
     return h;
   }
 
@@ -99,6 +102,29 @@ export class Api {
 
   async logout(): Promise<void> {
     await fetch(`${this.base}/api/auth/logout`, { method: 'POST', headers: this.headers() }).catch(() => {});
+  }
+
+  async createToken(name: string): Promise<{ ok: true; token: { id: string; name: string; createdAt: string }; secret: string }> {
+    return this.parse(
+      await fetch(`${this.base}/api/auth/tokens`, {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ name }),
+      }),
+    );
+  }
+
+  async listTokens(): Promise<{ ok: true; tokens: { id: string; name: string; createdAt: string; lastUsedAt: string | null }[] }> {
+    return this.parse(await fetch(`${this.base}/api/auth/tokens`, { headers: this.headers() }));
+  }
+
+  async revokeToken(id: string): Promise<{ ok: true }> {
+    return this.parse(
+      await fetch(`${this.base}/api/auth/tokens/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: this.headers(),
+      }),
+    );
   }
 
   async me(): Promise<MeResponse> {

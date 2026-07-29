@@ -12,6 +12,7 @@ import {
   resolveProposal,
   saveConfig,
   setSession,
+  setToken,
 } from './config.js';
 import { googleLogin } from './google-login.js';
 import { accessLabel, bold, dim, err, fmtDate, fmtMs, ok, table, warn } from './format.js';
@@ -31,7 +32,9 @@ interface DocRef {
 }
 
 function apiFor(config: CliConfig): Api {
-  return new Api(config.apiBase, config.session?.cookie);
+  // 우선순위: env CLOUDBTL_TOKEN > 저장된 API 토큰 > 세션 쿠키.
+  const token = process.env.CLOUDBTL_TOKEN || config.token?.value;
+  return new Api(config.apiBase, config.session?.cookie, token);
 }
 
 function buildAccess(opts: AccessOpts): AccessConfig {
@@ -119,9 +122,21 @@ export async function cmdLogin(opts: {
   basic?: boolean;
   email?: string;
   password?: string;
+  token?: string;
 }): Promise<void> {
   const config = await loadConfig();
   const api = new Api(config.apiBase);
+
+  // API 토큰 로그인 — 헤드리스(에이전트/CI). 검증 후 저장, 세션은 비운다.
+  if (opts.token) {
+    const { user: u } = await new Api(config.apiBase, undefined, opts.token).me();
+    if (!u) throw new Error('Token rejected by the server.');
+    await setSession(undefined);
+    await setToken({ value: opts.token, email: u.email, savedAt: new Date().toISOString() });
+    console.log(ok('✓ Token saved for ') + bold(u.email) + dim(` (${config.apiBase})`));
+    return;
+  }
+
   let user: { email: string; name: string };
   let cookie: string;
 
@@ -137,33 +152,67 @@ export async function cmdLogin(opts: {
     ({ user, cookie } = await googleLogin(api, clientId));
   }
 
+  await setToken(undefined); // 브라우저 로그인 = 세션 우선 — 남은 토큰 설정 제거
   await setSession({ cookie, email: user.email, savedAt: new Date().toISOString() });
   console.log(ok('✓ Logged in as ') + bold(user.email) + dim(` (${config.apiBase})`));
 }
 
 export async function cmdLogout(): Promise<void> {
   const config = await loadConfig();
-  if (!config.session) {
+  if (!config.session && !config.token) {
     console.log(dim('Not logged in.'));
     return;
   }
-  await apiFor(config).logout();
+  if (config.session) await apiFor(config).logout();
   await setSession(undefined);
+  await setToken(undefined); // 로컬 제거만 — 서버측 폐기는 "cloudbtl token rm"
   console.log(ok('✓ Logged out.'));
 }
 
 export async function cmdWhoami(): Promise<void> {
   const config = await loadConfig();
-  if (!config.session) {
-    console.log(dim('Not logged in. Run "cloudbtl login".'));
+  const viaToken = Boolean(process.env.CLOUDBTL_TOKEN || config.token);
+  if (!config.session && !viaToken) {
+    console.log(dim('Not logged in. Run "cloudbtl login" (or "cloudbtl login --token <cbtl_…>").'));
     return;
   }
   const { user } = await apiFor(config).me();
   if (!user) {
-    console.log(warn('Session expired. Run "cloudbtl login" again.'));
+    console.log(warn(viaToken ? 'Token invalid or revoked.' : 'Session expired. Run "cloudbtl login" again.'));
     return;
   }
-  console.log(`${bold(user.email)} ${dim(`(${user.name})`)} · ${config.apiBase}`);
+  console.log(`${bold(user.email)} ${dim(`(${user.name})`)} · ${config.apiBase}${viaToken ? dim(' · api-token') : ''}`);
+}
+
+// ---- API tokens (헤드리스 인증) ----
+
+export async function cmdTokenCreate(opts: { name?: string }): Promise<void> {
+  const config = await loadConfig();
+  const name = opts.name?.trim() || `cli-${new Date().toISOString().slice(0, 10)}`;
+  const { token, secret } = await apiFor(config).createToken(name);
+  console.log(ok('✓ Token created: ') + bold(token.name) + dim(` (${token.id})`));
+  console.log('\n  ' + bold(secret) + '\n');
+  console.log(warn('  Shown once — store it now.'));
+  console.log(dim('  Use: cloudbtl login --token <secret>   or   CLOUDBTL_TOKEN env var'));
+}
+
+export async function cmdTokenLs(): Promise<void> {
+  const config = await loadConfig();
+  const { tokens } = await apiFor(config).listTokens();
+  if (tokens.length === 0) {
+    console.log(dim('No API tokens. Create one with "cloudbtl token create".'));
+    return;
+  }
+  for (const t of tokens) {
+    console.log(`${bold(t.name)} ${dim(t.id)} · created ${t.createdAt.slice(0, 10)} · last used ${t.lastUsedAt ? t.lastUsedAt.slice(0, 10) : 'never'}`);
+  }
+}
+
+export async function cmdTokenRm(id: string): Promise<void> {
+  const config = await loadConfig();
+  await apiFor(config).revokeToken(id);
+  if (config.token) await setToken(undefined);
+  console.log(ok('✓ Token revoked.'));
 }
 
 // ---- documents ----

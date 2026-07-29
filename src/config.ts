@@ -17,10 +17,17 @@ export interface Session {
   savedAt: string;
 }
 
+export interface StoredToken {
+  value: string; // cbtl_… — 계정 전체 권한. config 파일은 mode 600.
+  email: string;
+  savedAt: string;
+}
+
 export interface CliConfig {
   apiBase: string;
   proposals: TrackedProposal[];
   session?: Session;
+  token?: StoredToken;
   googleClientId?: string;
 }
 
@@ -46,6 +53,7 @@ export async function loadConfig(): Promise<CliConfig> {
       apiBase: (parsed.apiBase || DEFAULT_API_BASE).replace(/\/+$/, ''),
       proposals: Array.isArray(parsed.proposals) ? parsed.proposals : [],
       session: parsed.session,
+      token: parsed.token,
       googleClientId: parsed.googleClientId,
     };
   } catch {
@@ -65,6 +73,12 @@ export function configFilePath(): string {
 export async function setSession(session: Session | undefined): Promise<void> {
   const config = await loadConfig();
   config.session = session;
+  await saveConfig(config);
+}
+
+export async function setToken(token: StoredToken | undefined): Promise<void> {
+  const config = await loadConfig();
+  config.token = token;
   await saveConfig(config);
 }
 

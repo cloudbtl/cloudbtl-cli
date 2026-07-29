@@ -15,6 +15,9 @@ import {
   cmdStats,
   cmdUpload,
   cmdWhoami,
+  cmdTokenCreate,
+  cmdTokenLs,
+  cmdTokenRm,
 } from './commands.js';
 
 const program = new Command();
@@ -33,6 +36,7 @@ program
   .option('-b, --basic', 'log in with email + password instead of Google', false)
   .option('-e, --email <email>', 'account email (implies --basic; otherwise prompted)')
   .option('-p, --password <password>', 'account password (implies --basic; or CLOUDBTL_PASSWORD)')
+  .option('--token <token>', 'authenticate with an API token (cbtl_…) — headless/agent use')
   .action(cmdLogin);
 
 program.command('logout').description('Clear the saved session').action(cmdLogout);
@@ -103,6 +107,19 @@ program
   .argument('<doc>', 'document id, ls index, or id prefix')
   .option('-y, --yes', 'skip confirmation', false)
   .action(cmdRm);
+
+const tokenCmd = program.command('token').description('Manage API tokens (headless auth)');
+tokenCmd
+  .command('create')
+  .description('Create an API token (requires login; secret shown once)')
+  .option('-n, --name <name>', 'token label')
+  .action(cmdTokenCreate);
+tokenCmd.command('ls').description('List active API tokens').action(cmdTokenLs);
+tokenCmd
+  .command('rm')
+  .description('Revoke an API token on the server')
+  .argument('<id>', 'token id (tok_…)')
+  .action(cmdTokenRm);
 
 program
   .command('config')
