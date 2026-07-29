@@ -1,6 +1,6 @@
 # cloudbtl CLI
 
-Command-line client for [cloudbtl.com](https://cloudbtl.com) — upload documents, manage share links, and read analytics from the terminal.
+Command-line client for [cloudbtl.com](https://cloudbtl.com) — upload documents (PDF/HTML/MD/PPTX), manage share links, and read analytics from the terminal.
 
 ## Install
 
@@ -71,11 +71,29 @@ Point the CLI at a different backend (e.g. local dev) with:
 cloudbtl config --api-base http://localhost:8081
 ```
 
+## Tenant workspaces (subdomain / custom domain)
+
+Uploads against the root domain are **personal** documents. To upload into an
+organization workspace, point the CLI at the tenant's host first — its subdomain
+(`{org}.cloudbtl.com`) or the org's custom domain if one is configured:
+
+```bash
+cloudbtl config --api-base https://acme.cloudbtl.com   # or the org's custom domain
+cloudbtl login --google                                # must be an org member
+cloudbtl upload deck.pdf -t "Q3 Proposal" --project P2026-01
+```
+
+- `--project <code>` groups the document under the workspace project (folder) with
+  that code, creating it on first use. Omit it to leave the document unfiled.
+- Share links inherit the tenant's domain (custom domain preferred), so recipients
+  see the org's brand, not cloudbtl.com.
+- `--project` only works on a tenant host — on the root domain it is ignored.
+
 ## Commands
 
 | Command | Description |
 |---|---|
-| `upload <file>` | Upload a PDF/HTML doc and create its first link |
+| `upload <file>` | Upload a PDF/HTML/MD/PPTX doc and create its first link |
 | `ls` | List locally-tracked documents |
 | `links <doc>` | List a document's share links |
 | `link add <doc>` | Create an additional share link |

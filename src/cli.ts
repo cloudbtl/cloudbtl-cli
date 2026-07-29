@@ -40,8 +40,8 @@ program.command('whoami').description('Show the logged-in account').action(cmdWh
 
 program
   .command('upload')
-  .description('Upload a PDF/HTML document and create its first share link')
-  .argument('<file>', 'path to a .pdf or .html file')
+  .description('Upload a PDF/HTML/MD/PPTX document and create its first share link')
+  .argument('<file>', 'path to a .pdf / .html / .md / .pptx file')
   .option('-t, --title <title>', 'document title (defaults to the filename)')
   .option('--project <code>', 'group the document under a project (subdomain workspaces only)')
   .option('-a, --access <mode>', accessHelp, 'public')
