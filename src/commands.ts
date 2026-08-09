@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { access as fsAccess } from 'node:fs/promises';
 import readline from 'node:readline';
-import { Api, type AccessConfig } from './api.js';
+import { Api, type AccessConfig, type Folder } from './api.js';
 import {
   type CliConfig,
   DEFAULT_GOOGLE_CLIENT_ID,
@@ -15,7 +15,7 @@ import {
   setToken,
 } from './config.js';
 import { googleLogin } from './google-login.js';
-import { accessLabel, bold, dim, err, fmtDate, fmtMs, ok, table, warn } from './format.js';
+import { accessLabel, bold, dim, emit, err, fmtDate, fmtMs, ok, table, warn } from './format.js';
 
 export interface AccessOpts {
   access?: string;
@@ -181,7 +181,9 @@ export async function cmdWhoami(): Promise<void> {
     console.log(warn(viaToken ? 'Token invalid or revoked.' : 'Session expired. Run "cloudbtl login" again.'));
     return;
   }
-  console.log(`${bold(user.email)} ${dim(`(${user.name})`)} · ${config.apiBase}${viaToken ? dim(' · api-token') : ''}`);
+  emit({ email: user.email, name: user.name, apiBase: config.apiBase, via: viaToken ? 'api-token' : 'session' }, () =>
+    console.log(`${bold(user.email)} ${dim(`(${user.name})`)} · ${config.apiBase}${viaToken ? dim(' · api-token') : ''}`),
+  );
 }
 
 // ---- API tokens (헤드리스 인증) ----
@@ -199,13 +201,12 @@ export async function cmdTokenCreate(opts: { name?: string }): Promise<void> {
 export async function cmdTokenLs(): Promise<void> {
   const config = await loadConfig();
   const { tokens } = await apiFor(config).listTokens();
-  if (tokens.length === 0) {
-    console.log(dim('No API tokens. Create one with "cloudbtl token create".'));
-    return;
-  }
-  for (const t of tokens) {
-    console.log(`${bold(t.name)} ${dim(t.id)} · created ${t.createdAt.slice(0, 10)} · last used ${t.lastUsedAt ? t.lastUsedAt.slice(0, 10) : 'never'}`);
-  }
+  emit({ tokens }, () => {
+    if (tokens.length === 0) return console.log(dim('No API tokens. Create one with "cloudbtl token create".'));
+    for (const t of tokens) {
+      console.log(`${bold(t.name)} ${dim(t.id)} · created ${t.createdAt.slice(0, 10)} · last used ${t.lastUsedAt ? t.lastUsedAt.slice(0, 10) : 'never'}`);
+    }
+  });
 }
 
 export async function cmdTokenRm(id: string): Promise<void> {
@@ -234,10 +235,12 @@ export async function cmdUpload(file: string, opts: AccessOpts & { title?: strin
     dashboardUrl: proposal.dashboardUrl,
     createdAt: new Date().toISOString(),
   });
-  console.log(ok('✓ Uploaded') + ` ${bold(proposal.title)} ${dim(`(${proposal.id})`)}`);
-  console.log(`  access:    ${accessLabel(proposal.accessMode)}${proposal.allowedDomains ? dim(` [${proposal.allowedDomains}]`) : ''}`);
-  console.log(`  share:     ${proposal.shareUrl}`);
-  console.log(`  dashboard: ${proposal.dashboardUrl}`);
+  emit({ ok: true, proposal }, () => {
+    console.log(ok('✓ Uploaded') + ` ${bold(proposal.title)} ${dim(`(${proposal.id})`)}`);
+    console.log(`  access:    ${accessLabel(proposal.accessMode)}${proposal.allowedDomains ? dim(` [${proposal.allowedDomains}]`) : ''}`);
+    console.log(`  share:     ${proposal.shareUrl}`);
+    console.log(`  dashboard: ${proposal.dashboardUrl}`);
+  });
 }
 
 export async function cmdLs(): Promise<void> {
@@ -245,20 +248,19 @@ export async function cmdLs(): Promise<void> {
   const api = apiFor(config);
   if (config.session) {
     const { proposals } = await api.myProposals();
-    if (proposals.length === 0) {
-      console.log(dim('No documents in your account yet.'));
-      return;
-    }
-    const rows = proposals.map((p, i) => [
-      String(i + 1),
-      p.id,
-      p.title.length > 36 ? p.title.slice(0, 35) + '…' : p.title,
-      String(p.links),
-      String(p.visitors),
-      String(p.opens),
-    ]);
-    console.log(table(['#', 'ID', 'TITLE', 'LINKS', 'VISITORS', 'OPENS'], rows));
-    console.log(dim(`\n${proposals.length} document(s) · ${config.session.email} · ${config.apiBase}`));
+    emit({ documents: proposals, account: config.session.email }, () => {
+      if (proposals.length === 0) return console.log(dim('No documents in your account yet.'));
+      const rows = proposals.map((p, i) => [
+        String(i + 1),
+        p.id,
+        p.title.length > 36 ? p.title.slice(0, 35) + '…' : p.title,
+        String(p.links),
+        String(p.visitors),
+        String(p.opens),
+      ]);
+      console.log(table(['#', 'ID', 'TITLE', 'LINKS', 'VISITORS', 'OPENS'], rows));
+      console.log(dim(`\n${proposals.length} document(s) · ${config.session!.email} · ${config.apiBase}`));
+    });
     return;
   }
   if (config.proposals.length === 0) {
@@ -398,6 +400,114 @@ export async function cmdClaim(ref: string | undefined): Promise<void> {
   console.log(dim(`\nClaimed ${done}/${targets.length} into ${config.session.email} — links extended to the 7-day tier.`));
 }
 
+// ---- folders (문서함) — 테넌트 워크스페이스 전용 ----
+
+async function resolveFolder(api: Api, ref: string): Promise<Folder> {
+  const { projects } = await api.listFolders();
+  if (!projects.length) {
+    throw new Error('No folders here. Tenant workspace required — set apiBase to your subdomain (cloudbtl config --api-base https://<org>.cloudbtl.com).');
+  }
+  const exact = projects.find((f) => f.id === ref || f.code === ref);
+  if (exact) return exact;
+  const pre = projects.filter((f) => f.id.startsWith(ref) || f.code.startsWith(ref));
+  if (pre.length === 1) return pre[0]!;
+  if (pre.length > 1) throw new Error(`"${ref}" is ambiguous (${pre.length} folders).`);
+  throw new Error(`"${ref}" is not a known folder. Run "cloudbtl folder ls".`);
+}
+
+export async function cmdFolderLs(): Promise<void> {
+  const config = await loadConfig();
+  const { projects } = await apiFor(config).listFolders();
+  emit({ folders: projects }, () => {
+    if (projects.length === 0) return console.log(dim('No folders. Create one with "cloudbtl folder create <code>".'));
+    const rows = projects.map((f) => [
+      f.code.length > 24 ? f.code.slice(0, 23) + '…' : f.code,
+      f.name.length > 30 ? f.name.slice(0, 29) + '…' : f.name,
+      f.myRole,
+      f.visibility,
+      String(f.docCount ?? ''),
+    ]);
+    console.log(table(['CODE', 'NAME', 'ROLE', 'VISIBILITY', 'DOCS'], rows));
+    console.log(dim(`\n${projects.length} folder(s) · ${config.apiBase}`));
+  });
+}
+
+export async function cmdFolderCreate(code: string, opts: { name?: string; private?: boolean }): Promise<void> {
+  const config = await loadConfig();
+  const api = apiFor(config);
+  const { project } = await api.createFolder(code, opts.name);
+  if (opts.private) await api.updateFolder(project.id, { visibility: 'private' });
+  emit({ ok: true, project, visibility: opts.private ? 'private' : 'org' }, () =>
+    console.log(ok('✓ Folder created ') + bold(project.code) + dim(` (${project.id})${opts.private ? ' · private' : ''}`)),
+  );
+}
+
+export async function cmdFolderRm(ref: string, opts: { yes?: boolean }): Promise<void> {
+  const config = await loadConfig();
+  const api = apiFor(config);
+  const f = await resolveFolder(api, ref);
+  if (!opts.yes) {
+    throw new Error(`This deletes folder "${f.name}" (documents inside are preserved, unfiled). Re-run with --yes to confirm.`);
+  }
+  await api.deleteFolder(f.id);
+  emit({ ok: true, deleted: f.id }, () => console.log(ok('✓ Folder deleted ') + f.name + dim(` (${f.id})`)));
+}
+
+export async function cmdFolderRename(ref: string, name: string): Promise<void> {
+  const config = await loadConfig();
+  const api = apiFor(config);
+  const f = await resolveFolder(api, ref);
+  await api.updateFolder(f.id, { name });
+  emit({ ok: true, id: f.id, name }, () => console.log(ok('✓ Renamed ') + dim(f.id) + ' → ' + bold(name)));
+}
+
+export async function cmdFolderDocs(ref: string): Promise<void> {
+  const config = await loadConfig();
+  const api = apiFor(config);
+  const f = await resolveFolder(api, ref);
+  const { proposals } = await api.folderDocs(f.id);
+  emit({ folder: f.code, proposals }, () => {
+    if (proposals.length === 0) return console.log(dim('No documents in this folder.'));
+    const rows = proposals.map((p) => [
+      p.id,
+      p.title.length > 36 ? p.title.slice(0, 35) + '…' : p.title,
+      p.kind,
+      p.createdAt.slice(0, 10),
+    ]);
+    console.log(table(['ID', 'TITLE', 'KIND', 'CREATED'], rows));
+  });
+}
+
+export async function cmdFolderMembers(ref: string): Promise<void> {
+  const config = await loadConfig();
+  const api = apiFor(config);
+  const f = await resolveFolder(api, ref);
+  const { members } = await api.listMembers(f.id);
+  emit({ folder: f.code, members }, () => {
+    if (members.length === 0) return console.log(dim('No explicit members. (org-visible folders grant VIEWER to all workspace members.)'));
+    const rows = members.map((m) => [m.email ?? dim('(pending)'), m.role, m.userId ? 'active' : 'invited', dim(m.id)]);
+    console.log(table(['EMAIL', 'ROLE', 'STATUS', 'MEMBER ID'], rows));
+  });
+}
+
+export async function cmdFolderAddMember(ref: string, email: string, opts: { role?: string }): Promise<void> {
+  const config = await loadConfig();
+  const api = apiFor(config);
+  const role = (opts.role ?? 'viewer').toUpperCase();
+  if (!['ADMIN', 'EDITOR', 'VIEWER'].includes(role)) throw new Error('--role must be one of: admin, editor, viewer');
+  const f = await resolveFolder(api, ref);
+  const { member } = await api.addMember(f.id, email, role);
+  emit({ ok: true, member }, () => console.log(ok('✓ Member added ') + email + dim(` · ${role}`)));
+}
+
+export async function cmdFolderRmMember(ref: string, memberId: string): Promise<void> {
+  const config = await loadConfig();
+  const api = apiFor(config);
+  const f = await resolveFolder(api, ref);
+  await api.removeMember(f.id, memberId);
+  emit({ ok: true }, () => console.log(ok('✓ Member removed ') + dim(memberId)));
+}
+
 export async function cmdConfig(opts: { apiBase?: string }): Promise<void> {
   const config = await loadConfig();
   if (opts.apiBase) {
@@ -406,8 +516,13 @@ export async function cmdConfig(opts: { apiBase?: string }): Promise<void> {
     console.log(ok('✓ apiBase set to ') + config.apiBase);
     return;
   }
-  console.log(`apiBase:   ${config.apiBase}`);
-  console.log(`config:    ${configFilePath()}`);
-  console.log(`account:   ${config.session ? config.session.email : dim('not logged in')}`);
-  console.log(`tracked:   ${config.proposals.length} local document(s)`);
+  emit(
+    { apiBase: config.apiBase, config: configFilePath(), account: config.session?.email ?? null, tracked: config.proposals.length },
+    () => {
+      console.log(`apiBase:   ${config.apiBase}`);
+      console.log(`config:    ${configFilePath()}`);
+      console.log(`account:   ${config.session ? config.session.email : dim('not logged in')}`);
+      console.log(`tracked:   ${config.proposals.length} local document(s)`);
+    },
+  );
 }

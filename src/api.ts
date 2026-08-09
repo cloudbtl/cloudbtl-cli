@@ -32,7 +32,32 @@ function mimeFor(file: string): string {
   const ext = extname(file).toLowerCase();
   if (ext === '.pdf') return 'application/pdf';
   if (ext === '.html' || ext === '.htm') return 'text/html';
+  if (ext === '.md' || ext === '.markdown') return 'text/markdown';
+  if (ext === '.pptx') return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
   return 'application/octet-stream';
+}
+
+export interface Folder {
+  id: string;
+  code: string;
+  name: string;
+  visibility: 'org' | 'private';
+  myRole: 'ADMIN' | 'EDITOR' | 'VIEWER';
+  externalRef: string | null;
+  externalRefKind: string | null;
+  docCount?: number;
+}
+export interface FolderMember {
+  id: string;
+  email: string | null;
+  userId: string | null;
+  role: 'ADMIN' | 'EDITOR' | 'VIEWER';
+}
+export interface FolderDoc {
+  id: string;
+  title: string;
+  kind: 'html' | 'md' | 'pdf' | 'pptx';
+  createdAt: string;
 }
 
 function extractSessionCookie(res: Response): string | null {
@@ -203,5 +228,63 @@ export class Api {
       headers: this.headers(),
     });
     await this.parse<{ ok: true }>(res);
+  }
+
+  // ── 문서함(folder) — 테넌트(서브도메인/커스텀도메인) 워크스페이스 전용 ──
+  async listFolders(): Promise<{ ok: true; projects: Folder[] }> {
+    return this.parse(await fetch(`${this.base}/api/projects`, { headers: this.headers() }));
+  }
+
+  async createFolder(code: string, name?: string): Promise<{ ok: true; project: { id: string; code: string; name: string } }> {
+    return this.parse(
+      await fetch(`${this.base}/api/projects`, {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ code, name }),
+      }),
+    );
+  }
+
+  async updateFolder(id: string, patch: { name?: string; visibility?: 'org' | 'private' }): Promise<{ ok: true; project: unknown }> {
+    return this.parse(
+      await fetch(`${this.base}/api/projects/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(patch),
+      }),
+    );
+  }
+
+  async deleteFolder(id: string): Promise<{ ok: true }> {
+    return this.parse(
+      await fetch(`${this.base}/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE', headers: this.headers() }),
+    );
+  }
+
+  async folderDocs(id: string): Promise<{ ok: true; proposals: FolderDoc[] }> {
+    return this.parse(await fetch(`${this.base}/api/projects/${encodeURIComponent(id)}/proposals`, { headers: this.headers() }));
+  }
+
+  async listMembers(id: string): Promise<{ ok: true; members: FolderMember[] }> {
+    return this.parse(await fetch(`${this.base}/api/projects/${encodeURIComponent(id)}/members`, { headers: this.headers() }));
+  }
+
+  async addMember(id: string, email: string, role: string): Promise<{ ok: true; member: FolderMember }> {
+    return this.parse(
+      await fetch(`${this.base}/api/projects/${encodeURIComponent(id)}/members`, {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ email, role }),
+      }),
+    );
+  }
+
+  async removeMember(id: string, memberId: string): Promise<{ ok: true }> {
+    return this.parse(
+      await fetch(`${this.base}/api/projects/${encodeURIComponent(id)}/members/${encodeURIComponent(memberId)}`, {
+        method: 'DELETE',
+        headers: this.headers(),
+      }),
+    );
   }
 }

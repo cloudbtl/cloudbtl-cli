@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { ApiClientError } from './api.js';
-import { err } from './format.js';
+import { err, setJsonMode } from './format.js';
 import {
   cmdClaim,
   cmdConfig,
@@ -18,14 +18,24 @@ import {
   cmdTokenCreate,
   cmdTokenLs,
   cmdTokenRm,
+  cmdFolderLs,
+  cmdFolderCreate,
+  cmdFolderRm,
+  cmdFolderRename,
+  cmdFolderDocs,
+  cmdFolderMembers,
+  cmdFolderAddMember,
+  cmdFolderRmMember,
 } from './commands.js';
 
 const program = new Command();
 
 program
   .name('cloudbtl')
-  .description('Command-line client for cloudbtl.com — upload documents, manage share links, read analytics.')
-  .version('0.1.0');
+  .description('Command-line client for cloudbtl.com — upload documents, manage folders/share links, read analytics.')
+  .version('0.1.0')
+  .option('--json', 'machine-readable JSON output (for scripts/agents)', false)
+  .hook('preAction', () => setJsonMode(Boolean(program.opts().json)));
 
 const accessHelp =
   'access mode: public | passcode | org (org needs --domains; passcode needs --passcode)';
@@ -120,6 +130,52 @@ tokenCmd
   .description('Revoke an API token on the server')
   .argument('<id>', 'token id (tok_…)')
   .action(cmdTokenRm);
+
+// ── 문서함(folder) — 테넌트 워크스페이스(서브도메인/커스텀도메인) 전용 ──
+const folder = program.command('folder').description('Manage document folders (tenant workspace)');
+folder.command('ls').description('List folders you can access (with your role)').action(cmdFolderLs);
+folder
+  .command('create')
+  .description('Create a folder')
+  .argument('<code>', 'unique folder key (e.g. acme-proposal)')
+  .option('-n, --name <name>', 'display name (defaults to code)')
+  .option('--private', 'restrict to explicit members (default: whole workspace can view)', false)
+  .action(cmdFolderCreate);
+folder
+  .command('rename')
+  .description('Rename a folder')
+  .argument('<folder>', 'folder id or code')
+  .argument('<name>', 'new display name')
+  .action(cmdFolderRename);
+folder
+  .command('rm')
+  .description('Delete a folder (documents inside are preserved, unfiled)')
+  .argument('<folder>', 'folder id or code')
+  .option('-y, --yes', 'skip confirmation', false)
+  .action(cmdFolderRm);
+folder
+  .command('docs')
+  .description('List documents in a folder')
+  .argument('<folder>', 'folder id or code')
+  .action(cmdFolderDocs);
+folder
+  .command('members')
+  .description('List folder members')
+  .argument('<folder>', 'folder id or code')
+  .action(cmdFolderMembers);
+folder
+  .command('add-member')
+  .description('Invite a member by email (ADMIN only)')
+  .argument('<folder>', 'folder id or code')
+  .argument('<email>', 'invitee email')
+  .option('-r, --role <role>', 'admin | editor | viewer', 'viewer')
+  .action(cmdFolderAddMember);
+folder
+  .command('rm-member')
+  .description('Remove a folder member (ADMIN only)')
+  .argument('<folder>', 'folder id or code')
+  .argument('<memberId>', 'member id (from "folder members")')
+  .action(cmdFolderRmMember);
 
 program
   .command('config')
