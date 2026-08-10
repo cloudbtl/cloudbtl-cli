@@ -32,7 +32,10 @@ const program = new Command();
 
 program
   .name('cloudbtl')
-  .description('Command-line client for cloudbtl.com — upload documents, manage folders/share links, read analytics.')
+  .description(
+    'Share documents on cloudbtl.com and see who opened them, how far they read, and what they clicked.\n' +
+      'Upload PDF/HTML/MD/PPTX, manage share links and folders, and read analytics — from the terminal.',
+  )
   .version('0.1.0')
   .option('--json', 'machine-readable JSON output (for scripts/agents)', false)
   .hook('preAction', () => setJsonMode(Boolean(program.opts().json)));
