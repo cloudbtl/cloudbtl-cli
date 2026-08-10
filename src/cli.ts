@@ -27,6 +27,15 @@ import {
   cmdFolderMembers,
   cmdFolderAddMember,
   cmdFolderRmMember,
+  cmdOrgLs,
+  cmdOrgMembers,
+  cmdOrgInvite,
+  cmdOrgInvitations,
+  cmdOrgRevokeInvite,
+  cmdOrgSetRole,
+  cmdOrgRmMember,
+  cmdOrgDocs,
+  cmdOrgAudit,
 } from './commands.js';
 
 const program = new Command();
@@ -188,6 +197,40 @@ folder
   .argument('<folder>', 'folder id or code')
   .argument('<memberId>', 'member id (from "folder members")')
   .action(cmdFolderRmMember);
+
+// ── 워크스페이스(org) 멤버·초대 관리 — 테넌트 워크스페이스, ADMIN 이상 ──
+const org = program.command('org').description('Manage workspace members and invitations (tenant workspace, ADMIN+)');
+org.command('ls').description('List workspaces you belong to, with your role').action(cmdOrgLs);
+org.command('members').description('List workspace members and their org roles').action(cmdOrgMembers);
+org
+  .command('invite')
+  .description('Invite someone to the workspace by email (they join on sign-in)')
+  .argument('<email>', 'invitee email')
+  .option('-r, --role <role>', 'admin | member (you cannot grant a role above your own)', 'member')
+  .action(cmdOrgInvite);
+org.command('invitations').description('List pending invitations').action(cmdOrgInvitations);
+org
+  .command('revoke-invite')
+  .description('Cancel a pending invitation')
+  .argument('<invitationId>', 'invitation id (from "org invitations")')
+  .action(cmdOrgRevokeInvite);
+org
+  .command('set-role')
+  .description('Change a member’s org role (OWNER changes require OWNER)')
+  .argument('<memberId>', 'member id (from "org members")')
+  .argument('<role>', 'owner | admin | member')
+  .action(cmdOrgSetRole);
+org
+  .command('rm-member')
+  .description('Remove a member from the workspace')
+  .argument('<memberId>', 'member id (from "org members")')
+  .action(cmdOrgRmMember);
+org.command('docs').description('List all documents in the workspace (incl. unfiled / orphaned)').action(cmdOrgDocs);
+org
+  .command('audit')
+  .description('Show recent admin actions (member/folder/document changes)')
+  .option('-n, --limit <n>', 'max entries (1–500, default 100)')
+  .action(cmdOrgAudit);
 
 program
   .command('config')

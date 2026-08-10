@@ -1,7 +1,16 @@
 import { spawn } from 'node:child_process';
 import { access as fsAccess } from 'node:fs/promises';
 import readline from 'node:readline';
-import { Api, type AccessConfig, type Folder } from './api.js';
+import {
+  Api,
+  type AccessConfig,
+  type Folder,
+  type OrgSummary,
+  type OrgMember,
+  type OrgInvitation,
+  type OrgProposal,
+  type AuditEntry,
+} from './api.js';
 import {
   type CliConfig,
   DEFAULT_GOOGLE_CLIENT_ID,
@@ -264,6 +273,105 @@ export async function cmdImageAdd(file: string, opts: { public?: boolean }): Pro
       console.log(dim(`  Use it in HTML:  <img src="${res.url}" alt="">`));
     },
   );
+}
+
+// ── 워크스페이스(org) 멤버·초대 관리 (ADMIN+) ──
+export async function cmdOrgLs(): Promise<void> {
+  const api = apiFor(await loadConfig());
+  const { orgs } = await api.listOrgs();
+  emit({ orgs }, () => {
+    if (orgs.length === 0) return console.log(dim('No workspaces. Create one on the web, then set --api-base.'));
+    console.log(table(['SUBDOMAIN', 'NAME', 'PLAN', 'ROLE'], orgs.map((o: OrgSummary) => [o.subdomain, o.name, o.plan, o.role])));
+  });
+}
+
+export async function cmdOrgMembers(): Promise<void> {
+  const api = apiFor(await loadConfig());
+  const orgId = await api.currentOrgId();
+  const { members } = await api.orgMembers(orgId);
+  emit({ members }, () => {
+    console.log(table(['ID', 'EMAIL', 'NAME', 'ROLE'], members.map((m: OrgMember) => [m.id, m.email, m.name, m.role])));
+  });
+}
+
+export async function cmdOrgInvite(email: string, opts: { role?: string }): Promise<void> {
+  const role = (opts.role ?? 'member').toUpperCase();
+  const api = apiFor(await loadConfig());
+  const orgId = await api.currentOrgId();
+  const { invitation } = await api.inviteOrgMember(orgId, email, role);
+  emit({ ok: true, invitation }, () => {
+    console.log(ok('✓ Invited') + ` ${bold(invitation.email)} ${dim(`as ${invitation.role}`)}`);
+    console.log(dim('  They join when they sign in / SSO with this email.'));
+  });
+}
+
+export async function cmdOrgInvitations(): Promise<void> {
+  const api = apiFor(await loadConfig());
+  const orgId = await api.currentOrgId();
+  const { invitations } = await api.orgInvitations(orgId);
+  emit({ invitations }, () => {
+    if (invitations.length === 0) return console.log(dim('No pending invitations.'));
+    console.log(table(['ID', 'EMAIL', 'ROLE'], invitations.map((i: OrgInvitation) => [i.id, i.email, i.role])));
+  });
+}
+
+export async function cmdOrgRevokeInvite(invId: string): Promise<void> {
+  const api = apiFor(await loadConfig());
+  const orgId = await api.currentOrgId();
+  await api.revokeOrgInvitation(orgId, invId);
+  emit({ ok: true, revoked: invId }, () => console.log(ok('✓ Revoked invitation') + ` ${dim(invId)}`));
+}
+
+export async function cmdOrgSetRole(memberId: string, role: string): Promise<void> {
+  const api = apiFor(await loadConfig());
+  const orgId = await api.currentOrgId();
+  const res = await api.updateOrgMemberRole(orgId, memberId, role.toUpperCase());
+  emit({ ok: true, memberId, role: res.role }, () => console.log(ok('✓ Role updated') + ` ${dim(memberId)} → ${bold(res.role)}`));
+}
+
+export async function cmdOrgRmMember(memberId: string): Promise<void> {
+  const api = apiFor(await loadConfig());
+  const orgId = await api.currentOrgId();
+  await api.removeOrgMember(orgId, memberId);
+  emit({ ok: true, removed: memberId }, () => console.log(ok('✓ Removed member') + ` ${dim(memberId)}`));
+}
+
+export async function cmdOrgDocs(): Promise<void> {
+  const api = apiFor(await loadConfig());
+  const orgId = await api.currentOrgId();
+  const { proposals } = await api.orgProposals(orgId);
+  emit({ proposals }, () => {
+    if (proposals.length === 0) return console.log(dim('No documents in this workspace.'));
+    console.log(
+      table(
+        ['ID', 'TITLE', 'KIND', 'OWNER', 'FOLDER', 'LINKS'],
+        proposals.map((p: OrgProposal) => [
+          p.id,
+          p.title,
+          p.kind,
+          p.owner?.email ?? dim('(none)'),
+          p.project?.code ?? dim('(unfiled)'),
+          String(p.activeLinks),
+        ]),
+      ),
+    );
+  });
+}
+
+export async function cmdOrgAudit(opts: { limit?: string }): Promise<void> {
+  const api = apiFor(await loadConfig());
+  const orgId = await api.currentOrgId();
+  const limit = opts.limit ? Number(opts.limit) : undefined;
+  const { entries } = await api.orgAudit(orgId, limit);
+  emit({ entries }, () => {
+    if (entries.length === 0) return console.log(dim('No audit entries.'));
+    console.log(
+      table(
+        ['WHEN', 'ACTOR', 'ACTION', 'TARGET'],
+        entries.map((e: AuditEntry) => [fmtDate(e.createdAt), e.actorEmail, e.action, `${e.targetType}:${e.targetId}`]),
+      ),
+    );
+  });
 }
 
 export async function cmdLs(): Promise<void> {

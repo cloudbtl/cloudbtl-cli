@@ -47,6 +47,44 @@ export interface Folder {
   externalRefKind: string | null;
   docCount?: number;
 }
+export interface OrgSummary {
+  id: string;
+  subdomain: string;
+  name: string;
+  plan: string;
+  role: 'OWNER' | 'ADMIN' | 'MEMBER';
+}
+export interface OrgMember {
+  id: string;
+  userId: string;
+  email: string;
+  name: string;
+  role: 'OWNER' | 'ADMIN' | 'MEMBER';
+  createdAt: string;
+}
+export interface OrgInvitation {
+  id: string;
+  email: string;
+  role: 'OWNER' | 'ADMIN' | 'MEMBER';
+  createdAt: string;
+}
+export interface OrgProposal {
+  id: string;
+  title: string;
+  kind: string;
+  createdAt: string;
+  owner: { id: string; email: string } | null;
+  project: { id: string; code: string; name: string } | null;
+  activeLinks: number;
+}
+export interface AuditEntry {
+  id: string;
+  actorEmail: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  createdAt: string;
+}
 export interface FolderMember {
   id: string;
   email: string | null;
@@ -243,6 +281,73 @@ export class Api {
       headers: this.headers(),
     });
     await this.parse<{ ok: true }>(res);
+  }
+
+  // ── 워크스페이스(org) 멤버·초대 관리 — 테넌트 워크스페이스, ADMIN+ ──
+  /** 현재 apiBase 테넌트의 orgId. 멤버가 아니면 서버가 orgId 를 안 주므로 에러. */
+  async currentOrgId(): Promise<string> {
+    const res = await this.parse<{ ok: true; tenant: { orgId?: string; subdomain?: string } | null }>(
+      await fetch(`${this.base}/api/orgs/current`, { headers: this.headers() }),
+    );
+    const orgId = res.tenant?.orgId;
+    if (!orgId) {
+      throw new ApiClientError(
+        400,
+        'No workspace here (or you are not a member). Set --api-base to your workspace subdomain, e.g. https://<org>.cloudbtl.com',
+      );
+    }
+    return orgId;
+  }
+
+  async listOrgs(): Promise<{ ok: true; orgs: OrgSummary[] }> {
+    return this.parse(await fetch(`${this.base}/api/orgs`, { headers: this.headers() }));
+  }
+  async orgMembers(orgId: string): Promise<{ ok: true; members: OrgMember[] }> {
+    return this.parse(await fetch(`${this.base}/api/orgs/${encodeURIComponent(orgId)}/members`, { headers: this.headers() }));
+  }
+  async updateOrgMemberRole(orgId: string, memberId: string, role: string): Promise<{ ok: true; role: string }> {
+    return this.parse(
+      await fetch(`${this.base}/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`, {
+        method: 'PATCH',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ role }),
+      }),
+    );
+  }
+  async removeOrgMember(orgId: string, memberId: string): Promise<{ ok: true }> {
+    return this.parse(
+      await fetch(`${this.base}/api/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`, {
+        method: 'DELETE',
+        headers: this.headers(),
+      }),
+    );
+  }
+  async orgInvitations(orgId: string): Promise<{ ok: true; invitations: OrgInvitation[] }> {
+    return this.parse(await fetch(`${this.base}/api/orgs/${encodeURIComponent(orgId)}/invitations`, { headers: this.headers() }));
+  }
+  async inviteOrgMember(orgId: string, email: string, role: string): Promise<{ ok: true; invitation: OrgInvitation }> {
+    return this.parse(
+      await fetch(`${this.base}/api/orgs/${encodeURIComponent(orgId)}/invitations`, {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ email, role }),
+      }),
+    );
+  }
+  async revokeOrgInvitation(orgId: string, invId: string): Promise<{ ok: true }> {
+    return this.parse(
+      await fetch(`${this.base}/api/orgs/${encodeURIComponent(orgId)}/invitations/${encodeURIComponent(invId)}`, {
+        method: 'DELETE',
+        headers: this.headers(),
+      }),
+    );
+  }
+  async orgProposals(orgId: string): Promise<{ ok: true; proposals: OrgProposal[] }> {
+    return this.parse(await fetch(`${this.base}/api/orgs/${encodeURIComponent(orgId)}/proposals`, { headers: this.headers() }));
+  }
+  async orgAudit(orgId: string, limit?: number): Promise<{ ok: true; entries: AuditEntry[] }> {
+    const q = limit ? `?limit=${encodeURIComponent(String(limit))}` : '';
+    return this.parse(await fetch(`${this.base}/api/orgs/${encodeURIComponent(orgId)}/audit${q}`, { headers: this.headers() }));
   }
 
   // ── 문서함(folder) — 테넌트(서브도메인/커스텀도메인) 워크스페이스 전용 ──
