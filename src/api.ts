@@ -186,6 +186,16 @@ export class Api {
     return this.parse<CreateProposalResponse>(res);
   }
 
+  /** 이미지 에셋 업로드(Pro+ 워크스페이스) → 공개 hosted URL. base64 인라인 대체. */
+  async uploadAsset(filePath: string): Promise<{ ok: true; id: string; url: string; contentType: string; size: number }> {
+    const buf = await readFile(filePath);
+    const form = new FormData();
+    // 서버가 매직바이트로 타입 확정 — 클라 mimetype 은 무시되므로 octet-stream 이어도 무방.
+    form.append('file', new Blob([buf], { type: mimeFor(filePath) }), basename(filePath));
+    const res = await fetch(`${this.base}/api/assets`, { method: 'POST', body: form, headers: this.headers() });
+    return this.parse(res);
+  }
+
   async summary(proposalId: string, ownerKey: string): Promise<ProposalSummaryResponse> {
     const res = await fetch(
       `${this.base}/api/proposals/${proposalId}/summary?key=${encodeURIComponent(ownerKey)}`,

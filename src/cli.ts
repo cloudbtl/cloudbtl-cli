@@ -14,6 +14,7 @@ import {
   cmdRm,
   cmdStats,
   cmdUpload,
+  cmdImageAdd,
   cmdWhoami,
   cmdTokenCreate,
   cmdTokenLs,
@@ -66,6 +67,13 @@ program
   .option('-p, --passcode <code>', 'passcode (for --access passcode, or org fallback)')
   .option('--download', 'allow recipients to download the file', false)
   .action(cmdUpload);
+
+const image = program.command('image').description('Host images for use in HTML documents (Pro workspace)');
+image
+  .command('add')
+  .description('Upload an image (PNG/JPEG/WebP/GIF) and get a hosted URL to use in <img src>')
+  .argument('<file>', 'path to an image file')
+  .action(cmdImageAdd);
 
 program
   .command('ls')
