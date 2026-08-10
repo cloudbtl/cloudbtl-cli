@@ -73,6 +73,7 @@ image
   .command('add')
   .description('Upload an image (PNG/JPEG/WebP/GIF) and get a hosted URL to use in <img src>')
   .argument('<file>', 'path to an image file')
+  .option('--public', 'make the image publicly viewable (for public landing pages); default is workspace-only', false)
   .action(cmdImageAdd);
 
 program

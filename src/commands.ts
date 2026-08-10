@@ -243,18 +243,27 @@ export async function cmdUpload(file: string, opts: AccessOpts & { title?: strin
   });
 }
 
-export async function cmdImageAdd(file: string): Promise<void> {
+export async function cmdImageAdd(file: string, opts: { public?: boolean }): Promise<void> {
   await fsAccess(file).catch(() => {
     throw new Error(`File not found: ${file}`);
   });
   const config = await loadConfig();
   const api = apiFor(config);
-  const res = await api.uploadAsset(file);
-  emit({ ok: true, id: res.id, url: res.url, contentType: res.contentType, size: res.size }, () => {
-    console.log(ok('✓ Uploaded image') + ` ${dim(`(${res.contentType}, ${Math.round(res.size / 1024)}KB)`)}`);
-    console.log(`  url: ${res.url}`);
-    console.log(dim(`  Use it in HTML:  <img src="${res.url}" alt="">`));
-  });
+  const res = await api.uploadAsset(file, { public: opts.public });
+  emit(
+    { ok: true, id: res.id, url: res.url, contentType: res.contentType, size: res.size, visibility: res.visibility },
+    () => {
+      console.log(
+        ok('✓ Uploaded image') +
+          ` ${dim(`(${res.contentType}, ${Math.round(res.size / 1024)}KB, ${res.visibility})`)}`,
+      );
+      console.log(`  url: ${res.url}`);
+      if (res.visibility === 'private') {
+        console.log(warn('  private — only workspace members can load it. Use --public for a public page.'));
+      }
+      console.log(dim(`  Use it in HTML:  <img src="${res.url}" alt="">`));
+    },
+  );
 }
 
 export async function cmdLs(): Promise<void> {
