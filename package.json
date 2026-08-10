@@ -1,22 +1,42 @@
 {
-  "name": "@cloudbtl/cli",
+  "name": "cloudbtl",
   "version": "0.1.0",
-  "description": "Command-line client for cloudbtl.com — upload documents, manage share links, read analytics.",
+  "description": "CLI for cloudbtl.com — share documents and see who opened them, how far they read, and what they clicked. Upload PDF/HTML/MD/PPTX, manage share links, folders and workspaces, host images, read analytics.",
   "type": "module",
   "bin": {
     "cloudbtl": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "engines": {
     "node": ">=18"
+  },
+  "keywords": [
+    "cloudbtl",
+    "docsend",
+    "document-sharing",
+    "share-links",
+    "document-analytics",
+    "read-tracking",
+    "pdf",
+    "cli"
+  ],
+  "homepage": "https://cloudbtl.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cloudbtl/cloudbtl-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cloudbtl/cloudbtl-cli/issues"
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "start": "node dist/cli.js"
+    "start": "node dist/cli.js",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "commander": "^12.1.0",
