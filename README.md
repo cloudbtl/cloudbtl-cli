@@ -123,6 +123,9 @@ cloudbtl upload deck.pdf -t "Q3 Proposal" --project P2026-01
 | Command | Description |
 |---|---|
 | `upload <file>` | Upload a PDF/HTML/MD/PPTX doc and create its first link |
+| `land <files...>` | Land many files into the workspace library: no share link, sha256 dedupe, baseline text extraction (see below) |
+| `descriptors <doc>` | Derived descriptors for a document (built-in text pages, enricher outputs) |
+| `jobs <doc>` | Processing ledger for a document (baseline extraction, external enrichment) |
 | `ls` | List locally-tracked documents |
 | `links <doc>` | List a document's share links |
 | `link add <doc>` | Create an additional share link |
@@ -133,3 +136,29 @@ cloudbtl upload deck.pdf -t "Q3 Proposal" --project P2026-01
 | `config [--api-base <url>]` | Show config or set the API base |
 
 `<doc>` accepts a full id (`prop_…`), a 1-based `ls` index, or a unique id prefix.
+
+## Landing (bulk, headless)
+
+`land` is the entry point for scripts and agents that throw many files into a workspace at once. Nothing is published:
+no share link is created (unless `--link`), identical bytes in the same workspace collapse to one document
+(`--no-dedupe` to disable), and CloudBTL runs its built-in baseline extraction inline (PDF text layer,
+HTML/Markdown text, page count) so the response already tells you what it read.
+
+```bash
+cloudbtl login --token cbtl_…                       # or a browser login
+cloudbtl config --api-base https://acme.cloudbtl.com  # the workspace the files belong to
+
+cloudbtl land ./folder/*.pdf ./folder/*.md \
+  -s onedrive \                                      # where they came from (opaque tag)
+  --ref 'LM/#240408/a.pdf' 'LM/#240408/b.pdf' 'LM/#240408/c.md' \   # one per file, same order
+  -m '{"division":"LM","project_folder":"#240408"}' \               # attached to every file (opaque JSON)
+  -b onedrive-2026-09-21                              # batch id for auditing / reprocessing
+
+cloudbtl descriptors prop_… -k text.page             # what the baseline read
+cloudbtl jobs prop_…                                 # ledger: extract.baseline / enrich.<producer>
+```
+
+Limits: 50 files × 50 MB per call. Use `--no-baseline` for very large corpora and drain later with
+`POST /api/pipeline/drain`. Office formats and scanned PDFs are stored but left to external enrichers
+(the job shows `skipped`). Full contract, webhooks and the enricher/consumer guides:
+`cloudbtl-site/docs/spec/landing-layer.md`.
