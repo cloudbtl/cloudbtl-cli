@@ -1,16 +1,8 @@
 # cloudbtl CLI
 
-**What CloudBTL is.** You send an important document — a proposal, a pitch deck, a
-report — and then go blind: Did they open it? How far did they read? Where did they
-stop? Is the deal still alive? CloudBTL turns the *after-you-hit-send* moment into a
-signal. Share a document as a link and see **who opened it, how far they read (page
-and section), and what they clicked** — while controlling who can view it, for how
-long, and behind what gate (public / passcode / verified org email). It's built for
-the people who live on sent documents: sales, founders raising, agencies, consultants.
+CloudBTL is a document landing layer for decision models, with tracked sharing on the same records. It preserves a file or source link with its hash, source path and version; deterministic extractors and external enrichers add provenance-carrying descriptors; trees expose those records as compact options to JevRAG or another consumer.
 
-This is the command-line client for [cloudbtl.com](https://cloudbtl.com) — upload
-documents (PDF/HTML/MD/PPTX), manage share links and folders, and read analytics from
-the terminal, so scripts and agents can use CloudBTL headlessly.
+This is the command-line client for [cloudbtl.com](https://cloudbtl.com). Use it to land stored or linked documents in bulk, run local descriptor producers without sending content to a managed model, write descriptors back, inspect processing jobs, and manage tracked share links and analytics. The browser is best for throwing in folders; the CLI is the repeatable path for scripts, migrations and local processing.
 
 ## Install
 
