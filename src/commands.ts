@@ -71,7 +71,7 @@ function buildAccess(opts: AccessOpts): AccessConfig {
     throw new Error(`--access must be one of: public, passcode, org (got "${mode}")`);
   }
   if (mode === 'org' && !opts.domains?.trim()) {
-    throw new Error('Organization links need --domains (e.g. --domains clientcorp.com,sweetspot.co.kr)');
+    throw new Error('Organization links need --domains (e.g. --domains clientcorp.com,example.org)');
   }
   if (mode === 'passcode' && (!opts.passcode || opts.passcode.length < 6)) {
     throw new Error('Passcode links need --passcode with at least 6 characters.');

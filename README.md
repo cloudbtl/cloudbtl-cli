@@ -4,6 +4,15 @@ CloudBTL is a document landing layer for decision models, with tracked sharing o
 
 This is the command-line client for [cloudbtl.com](https://cloudbtl.com). Use it to land stored or linked documents in bulk, run local descriptor producers without sending content to a managed model, write descriptors back, inspect processing jobs, and manage tracked share links and analytics. The browser is best for throwing in folders; the CLI is the repeatable path for scripts, migrations and local processing.
 
+## Design principles
+
+- **Local first.** Scanning, hashing and optional enrichment happen on the user's machine unless a command explicitly uploads bytes or descriptors.
+- **Resume instead of restart.** Bulk work is idempotent, manifest-backed and safe to repeat after interruption.
+- **Provenance travels with derivatives.** Descriptors identify their producer and version and stay tied to the source content hash.
+- **Landing does not publish.** `land` creates no share link unless `--link` is explicit.
+- **Domain neutral.** The CLI moves files, metadata and descriptors; company-specific definitions belong in caller-supplied metadata and enrichers.
+- **Scriptable by default.** Stable IDs and `--json` are first-class paths, while human-readable output remains useful at a terminal.
+
 ## Install
 
 ```bash
@@ -32,8 +41,8 @@ documents this CLI uploaded.
   session. It serves a one-page sign-in on `http://localhost:5173` (an authorized origin
   on the cloudbtl OAuth client). Set `CLOUDBTL_OAUTH_PORT` to use a different (authorized)
   port, or `CLOUDBTL_NO_BROWSER=1` to print the URL instead of auto-opening.
-- Email/password login only works for accounts that have a password. If you only ever
-  "Sign in with Google" on the web, use `--google` here too.
+- Email/password login only works for accounts that have a password. If you normally
+  sign in with Google on the web, use plain `cloudbtl login` here too.
 
 ## Usage
 
@@ -42,7 +51,7 @@ documents this CLI uploaded.
 cloudbtl upload deck.pdf -t "Q3 Proposal"
 
 # Upload restricted to an organization (recipients verify with Google)
-cloudbtl upload deck.pdf -a org -d clientcorp.com,sweetspot.co.kr
+cloudbtl upload deck.pdf -a org -d clientcorp.com,example.org
 
 # Upload behind a passcode
 cloudbtl upload deck.pdf -a passcode -p hunter2secret
@@ -84,7 +93,7 @@ The CLI uses the platform's existing model:
 
 - **Upload** is anonymous and returns an `ownerKey` for the document.
 - The CLI stores `{ id, ownerKey, … }` in `~/.config/cloudbtl/config.json` (mode `600`) and uses the `ownerKey` to manage links and read analytics.
-- So `ls` lists documents **this CLI uploaded** — not your full browser account. Keep the config file safe: the `ownerKey` is the document's management credential.
+- With a server login or API token, `ls` reads the account's documents. Without one, it lists only locally tracked anonymous uploads. Keep the config file safe: an anonymous document's `ownerKey` is its management credential.
 
 Point the CLI at a different backend (e.g. local dev) with:
 
@@ -124,7 +133,7 @@ cloudbtl upload deck.pdf -t "Q3 Proposal" --project P2026-01
 | `link rm <doc> <linkId>` | Delete a share link |
 | `stats <doc>` | Visitors, per-page dwell, recent activity |
 | `open <doc>` | Open the dashboard in a browser |
-| `rm <doc> --yes` | Delete the document and all its data |
+| `rm <doc> --yes` | Soft-delete the document and disable its links |
 | `config [--api-base <url>]` | Show config or set the API base |
 
 `<doc>` accepts a full id (`prop_…`), a 1-based `ls` index, or a unique id prefix.
@@ -167,4 +176,12 @@ cloudbtl jobs prop_…
 
 `land` hashes files locally, removes local duplicates, groups small files into requests of at most 50 files and 25 MB, and sends files of 25 MB or more directly to storage (up to the server's 2 GiB limit). HTTP 429 responses honor `Retry-After` and back off automatically. A stopped run resumes from entries marked `landed` or `deduplicated` in the manifest; failed entries are retried.
 
-Use `--no-baseline` for very large corpora and drain later with `POST /api/pipeline/drain`. Full contract, webhooks and the enricher/consumer guides live in `cloudbtl-site/docs/spec/landing-layer.md`.
+Use `--no-baseline` for very large corpora and drain later with `POST /api/pipeline/drain`. Run `cloudbtl land --help` for the current client contract.
+
+## Security
+
+Do not put API tokens in manifests, source metadata or shell history. Prefer `CLOUDBTL_TOKEN` from a local secret store, and see [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

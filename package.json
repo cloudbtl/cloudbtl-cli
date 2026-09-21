@@ -1,15 +1,17 @@
 {
   "name": "cloudbtl",
   "version": "0.1.0",
-  "description": "CLI for cloudbtl.com — share documents and see who opened them, how far they read, and what they clicked. Upload PDF/HTML/MD/PPTX, manage share links, folders and workspaces, host images, read analytics.",
+  "description": "Local-first CLI for landing, enriching and sharing documents through CloudBTL.",
   "type": "module",
   "bin": {
     "cloudbtl": "dist/cli.js"
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "NOTICE"
   ],
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=18"
   },
@@ -19,6 +21,8 @@
     "document-sharing",
     "share-links",
     "document-analytics",
+    "document-ingestion",
+    "provenance",
     "read-tracking",
     "pdf",
     "cli"
@@ -46,5 +50,8 @@
     "@types/node": "^22.7.4",
     "tsup": "^8.3.0",
     "typescript": "^5.6.2"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
   }
 }
