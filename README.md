@@ -1,186 +1,194 @@
-# cloudbtl CLI
+# CloudBTL CLI
 
-CloudBTL is a document landing layer for decision models, with tracked sharing on the same records. It preserves a file or source link with its hash, source path and version; deterministic extractors and external enrichers add provenance-carrying descriptors; trees expose those records as compact options to JevRAG or another consumer.
+**Land a folder. Keep its provenance. Resume anytime.**
 
-This is the command-line client for [cloudbtl.com](https://cloudbtl.com). Use it to land stored or linked documents in bulk, run local descriptor producers without sending content to a managed model, write descriptors back, inspect processing jobs, and manage tracked share links and analytics. The browser is best for throwing in folders; the CLI is the repeatable path for scripts, migrations and local processing.
+[![CI](https://github.com/cloudbtl/cloudbtl-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/cloudbtl/cloudbtl-cli/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-339933?logo=nodedotjs&logoColor=white)](package.json)
+
+The CloudBTL CLI moves documents from a laptop, shared drive, or migration job into [CloudBTL](https://cloudbtl.com). It hashes files before upload, preserves their source paths, skips duplicate content, records every result in a resumable manifest, and can return machine-readable output to scripts and agents.
+
+It also manages the other side of a document's life: tracked share links, workspace folders, access, and read analytics.
+
+```text
+files and folders
+      │
+      ▼
+ scan → hash → deduplicate → land → extract descriptors
+      │                         │
+      └── resumable manifest    └── source path · version · provenance
+```
+
+| Use | Command | Creates a share link? |
+| --- | --- | --- |
+| Import a corpus for search, enrichment, or migration | `cloudbtl land` | No, unless `--link` is explicit |
+| Send one document and track how it is read | `cloudbtl upload` | Yes |
+
+## Quick start
+
+You need Node.js 18 or newer. A dry run works without an account; landing files requires a CloudBTL account and writes to `https://cloudbtl.com` unless you select a tenant host with `cloudbtl config --api-base`.
+
+Install from source:
+
+```bash
+git clone https://github.com/cloudbtl/cloudbtl-cli.git
+cd cloudbtl-cli
+npm install
+npm run build
+npm link
+```
+
+Sign in and inspect a directory without uploading anything:
+
+```bash
+cloudbtl login
+
+cloudbtl land ~/Documents/SharedDrive \
+  --recursive \
+  --exclude '~$*,.DS_Store' \
+  --ref-from-path ~/Documents/SharedDrive \
+  --dry-run
+```
+
+Typical output:
+
+```text
+124 files ready · 8.4GB · 0 resumed · 7 local duplicates
+```
+
+Land the same tree with a manifest. If the process stops, run the command again; completed files are skipped.
+
+```bash
+cloudbtl land ~/Documents/SharedDrive \
+  --recursive \
+  --exclude '~$*,.DS_Store' \
+  --source shared-drive \
+  --ref-from-path ~/Documents/SharedDrive \
+  --manifest ./shared-drive-land.jsonl \
+  --concurrency 3
+```
+
+Landing creates document records without publishing them. Add `--link` only when each landed file should also receive a public share link.
+
+## Why use the CLI?
+
+- **Safe bulk intake.** Scan directories recursively, include or exclude globs, and upload small files in batches.
+- **Content deduplication.** SHA-256 hashes collapse identical bytes within a workspace, even when filenames or paths differ.
+- **Reliable retries.** A JSONL manifest records landed, deduplicated, and failed files so interrupted work can resume.
+- **Source fidelity.** `source`, `sourceRef`, batch IDs, path-derived metadata, and content hashes travel with each document.
+- **Large-file support.** Files above the multipart threshold go directly to object storage; the server accepts files up to its configured 2 GiB limit.
+- **Automation-friendly output.** Use `--json`, API tokens, and stable document IDs in CI, migrations, and agent workflows.
 
 ## Design principles
 
-- **Local first.** Scanning, hashing and optional enrichment happen on the user's machine unless a command explicitly uploads bytes or descriptors.
-- **Resume instead of restart.** Bulk work is idempotent, manifest-backed and safe to repeat after interruption.
-- **Provenance travels with derivatives.** Descriptors identify their producer and version and stay tied to the source content hash.
-- **Landing does not publish.** `land` creates no share link unless `--link` is explicit.
-- **Domain neutral.** The CLI moves files, metadata and descriptors; company-specific definitions belong in caller-supplied metadata and enrichers.
-- **Scriptable by default.** Stable IDs and `--json` are first-class paths, while human-readable output remains useful at a terminal.
+1. **Local first.** Scanning and hashing happen on the user's machine. Content moves only when an upload command is explicit.
+2. **Resume instead of restart.** Bulk operations are idempotent, manifest-backed, and safe to repeat.
+3. **Provenance travels with derivatives.** Every descriptor identifies its producer and version and remains tied to the source content hash.
+4. **Landing does not publish.** Storage and sharing are separate actions.
+5. **Domain meaning stays outside the client.** The CLI transports metadata and descriptors without embedding one company's taxonomy.
+6. **Human and machine interfaces are peers.** Terminal output is readable; `--json` and stable identifiers expose the same operations to code.
 
-## Install
+## Two document paths
+
+### Land documents for retrieval
+
+Use `land` when the destination is a document lake, retrieval system, or later enrichment pipeline.
+
+```bash
+cloudbtl land ./archive --recursive \
+  --include '*.pdf,*.pptx,*.docx,*.xlsx' \
+  --ref-from-path ./archive \
+  --meta-from-path '^(?<department>[^/]+)/(?<year>20[0-9]{2})/' \
+  --manifest ./archive.jsonl
+
+cloudbtl descriptors prop_abc123 --kind text.page
+cloudbtl jobs prop_abc123
+```
+
+Baseline extraction records deterministic facts such as file type, page count, and available text. External enrichers can write additional descriptors under their own producer identity.
+
+Use `--no-baseline` for large imports that should be extracted later by the server pipeline.
+
+### Upload a document to share
+
+Use `upload` when the immediate result should be a tracked link.
+
+```bash
+# Public link
+cloudbtl upload proposal.pdf --title "Q3 proposal"
+
+# Recipient must sign in with an allowed email domain
+cloudbtl upload proposal.pdf --access org --domains example.org
+
+# Passcode-protected link
+cloudbtl upload proposal.pdf --access passcode --passcode correct-horse-42
+
+cloudbtl stats 1
+cloudbtl open 1
+```
+
+Document references accept a full ID, a unique ID prefix, or a one-based index from `cloudbtl ls`.
+
+## Authentication
+
+Interactive login opens a browser:
+
+```bash
+cloudbtl login
+cloudbtl whoami
+```
+
+For agents and CI, create an API token once and provide it through the environment:
+
+```bash
+cloudbtl token create --name ingestion-worker
+CLOUDBTL_TOKEN=cbtl_xxxxxxxx cloudbtl --json land ./incoming --recursive
+```
+
+The secret is shown once. Keep it out of manifests, source metadata, command history, and repository files.
+
+Anonymous `upload` is also supported. Its management credential is stored in `~/.config/cloudbtl/config.json` with mode `600`; without an authenticated account, `cloudbtl ls` shows only uploads tracked in that local registry.
+
+## Workspaces and custom domains
+
+Point the client at a tenant host before signing in:
+
+```bash
+cloudbtl config --api-base https://acme.cloudbtl.com
+cloudbtl login
+cloudbtl land ./records --recursive --project PROJECT-2026
+```
+
+The CLI uses the selected host for workspace membership, folders, projects, and generated share links. `--project` applies only to tenant workspaces.
+
+## Command map
+
+| Area | Commands |
+| --- | --- |
+| Authentication | `login`, `logout`, `whoami`, `token create/ls/rm` |
+| Intake | `upload`, `land`, `claim` |
+| Processing | `descriptors`, `jobs` |
+| Documents | `ls`, `open`, `rm` |
+| Sharing | `links`, `link add`, `link rm`, `stats` |
+| Workspace | `folder …`, `org …`, `image add` |
+| Configuration | `config` |
+
+Run `cloudbtl help <command>` for the complete option contract.
+
+## Development
 
 ```bash
 npm install
+npm run typecheck
 npm run build
-npm link          # makes `cloudbtl` available globally
+npm test --if-present
 ```
 
-> Requires Node.js 18+ (uses the built-in `fetch`/`FormData`).
-
-## Login (optional, for account-wide management)
-
-```bash
-cloudbtl login              # sign in with Google in the browser (recommended)
-cloudbtl login --basic      # email + password (password accounts only)
-cloudbtl whoami
-cloudbtl logout
-```
-
-When logged in, `ls` lists your **whole account** and `links`/`stats`/`rm` work on any
-of your documents by id — no per-document key needed. Without logging in, the CLI still
-works anonymously: `upload` returns a key it stores locally, and `ls` shows only the
-documents this CLI uploaded.
-
-- `login` opens a browser, you pick your Google account, and the CLI captures the
-  session. It serves a one-page sign-in on `http://localhost:5173` (an authorized origin
-  on the cloudbtl OAuth client). Set `CLOUDBTL_OAUTH_PORT` to use a different (authorized)
-  port, or `CLOUDBTL_NO_BROWSER=1` to print the URL instead of auto-opening.
-- Email/password login only works for accounts that have a password. If you normally
-  sign in with Google on the web, use plain `cloudbtl login` here too.
-
-## Usage
-
-```bash
-# Upload a document (creates a public share link by default)
-cloudbtl upload deck.pdf -t "Q3 Proposal"
-
-# Upload restricted to an organization (recipients verify with Google)
-cloudbtl upload deck.pdf -a org -d clientcorp.com,example.org
-
-# Upload behind a passcode
-cloudbtl upload deck.pdf -a passcode -p hunter2secret
-
-# List documents you've uploaded (tracked locally)
-cloudbtl ls
-
-# Inspect / manage a document (by id, ls index, or id prefix)
-cloudbtl links 1
-cloudbtl link add 1 -a org -d clientcorp.com --alias "Client Corp"
-cloudbtl link rm 1 link_xxxxxxxx
-cloudbtl stats 1
-cloudbtl open 1
-cloudbtl rm 1 --yes
-```
-
-## Headless auth (agents / CI) — API tokens
-
-For environments without a browser (LLM agents, CI), use a personal API token:
-
-```bash
-# once, on a machine where you CAN log in with the browser:
-cloudbtl login
-cloudbtl token create -n my-agent      # prints cbtl_… secret ONCE
-
-# on the headless machine:
-cloudbtl login --token cbtl_xxxxxxxx   # verifies + stores it
-# or keep it out of the config file entirely:
-CLOUDBTL_TOKEN=cbtl_xxxxxxxx cloudbtl upload deck.pdf
-```
-
-- The token carries your full account permissions (no scopes yet). Revoke with
-  `cloudbtl token rm <tok_…>`; list with `cloudbtl token ls`.
-- Works with tenant workspaces too — set `config --api-base` to the tenant host first.
-
-## How it works / auth
-
-The CLI uses the platform's existing model:
-
-- **Upload** is anonymous and returns an `ownerKey` for the document.
-- The CLI stores `{ id, ownerKey, … }` in `~/.config/cloudbtl/config.json` (mode `600`) and uses the `ownerKey` to manage links and read analytics.
-- With a server login or API token, `ls` reads the account's documents. Without one, it lists only locally tracked anonymous uploads. Keep the config file safe: an anonymous document's `ownerKey` is its management credential.
-
-Point the CLI at a different backend (e.g. local dev) with:
-
-```bash
-cloudbtl config --api-base http://localhost:8081
-```
-
-## Tenant workspaces (subdomain / custom domain)
-
-Uploads against the root domain are **personal** documents. To upload into an
-organization workspace, point the CLI at the tenant's host first — its subdomain
-(`{org}.cloudbtl.com`) or the org's custom domain if one is configured:
-
-```bash
-cloudbtl config --api-base https://acme.cloudbtl.com   # or the org's custom domain
-cloudbtl login                                         # must be an org member
-cloudbtl upload deck.pdf -t "Q3 Proposal" --project P2026-01
-```
-
-- `--project <code>` groups the document under the workspace project (folder) with
-  that code, creating it on first use. Omit it to leave the document unfiled.
-- Share links inherit the tenant's domain (custom domain preferred), so recipients
-  see the org's brand, not cloudbtl.com.
-- `--project` only works on a tenant host — on the root domain it is ignored.
-
-## Commands
-
-| Command | Description |
-|---|---|
-| `upload <file>` | Upload a PDF/HTML/MD/PPTX doc and create its first link |
-| `land <files...>` | Land files or directory trees with sha256 dedupe, manifests, resume and automatic batching (see below) |
-| `descriptors <doc>` | Derived descriptors for a document (built-in text pages, enricher outputs) |
-| `jobs <doc>` | Processing ledger for a document (baseline extraction, external enrichment) |
-| `ls` | List locally-tracked documents |
-| `links <doc>` | List a document's share links |
-| `link add <doc>` | Create an additional share link |
-| `link rm <doc> <linkId>` | Delete a share link |
-| `stats <doc>` | Visitors, per-page dwell, recent activity |
-| `open <doc>` | Open the dashboard in a browser |
-| `rm <doc> --yes` | Soft-delete the document and disable its links |
-| `config [--api-base <url>]` | Show config or set the API base |
-
-`<doc>` accepts a full id (`prop_…`), a 1-based `ls` index, or a unique id prefix.
-
-## Landing (bulk, headless)
-
-`land` is the entry point for scripts and agents that throw many files into a workspace at once. Nothing is published:
-no share link is created (unless `--link`), identical bytes in the same workspace collapse to one document
-(`--no-dedupe` to disable), and CloudBTL runs its built-in baseline extraction inline (PDF text layer,
-HTML/Markdown text, page count) so the response already tells you what it read.
-
-```bash
-cloudbtl login --token cbtl_…
-cloudbtl config --api-base https://acme.cloudbtl.com
-
-# Inspect a tree without uploading. Include/exclude patterns match paths and filenames.
-cloudbtl land ./OneDrive --recursive \
-  --include '*.pdf,*.pptx,*.docx,*.xlsx' \
-  --exclude '~$*,.DS_Store' \
-  --ref-from-path ./OneDrive \
-  --dry-run
-
-# Run it. The JSONL manifest records every result; rerunning skips successful paths.
-cloudbtl land ./OneDrive --recursive \
-  --exclude '~$*,.DS_Store' \
-  --source onedrive \
-  --ref-from-path ./OneDrive \
-  --manifest ./onedrive-land.jsonl \
-  --concurrency 3
-
-# Optional: derive per-file metadata from its relative source path.
-cloudbtl land ./OneDrive --recursive \
-  --ref-from-path ./OneDrive \
-  --meta-from-path '^(?<division>[^/]+)/(?<year>20[0-9]{2})/' \
-  --manifest ./onedrive-land.jsonl
-
-cloudbtl descriptors prop_… -k text.page
-cloudbtl jobs prop_…
-```
-
-`land` hashes files locally, removes local duplicates, groups small files into requests of at most 50 files and 25 MB, and sends files of 25 MB or more directly to storage (up to the server's 2 GiB limit). HTTP 429 responses honor `Retry-After` and back off automatically. A stopped run resumes from entries marked `landed` or `deduplicated` in the manifest; failed entries are retried.
-
-Use `--no-baseline` for very large corpora and drain later with `POST /api/pipeline/drain`. Run `cloudbtl land --help` for the current client contract.
+CI also verifies the npm package contents with `npm pack --dry-run` and audits dependencies.
 
 ## Security
 
-Do not put API tokens in manifests, source metadata or shell history. Prefer `CLOUDBTL_TOKEN` from a local secret store, and see [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -46,8 +46,8 @@ const program = new Command();
 program
   .name('cloudbtl')
   .description(
-    'Share documents on cloudbtl.com and see who opened them, how far they read, and what they clicked.\n' +
-      'Upload PDF/HTML/MD/PPTX, manage share links and folders, and read analytics — from the terminal.',
+    'Land files with hashes, source paths, resumable manifests, and provenance.\n' +
+      'Then inspect descriptors or create tracked share links — from a terminal, script, or agent.',
   )
   .version('0.1.0')
   .option('--json', 'machine-readable JSON output (for scripts/agents)', false)
