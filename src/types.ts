@@ -60,6 +60,54 @@ export interface CreateProposalResponse {
   };
 }
 
+// ── 원천층(landing) ──
+export interface LandedProposal {
+  id: string;
+  lineageId: string;
+  version: number;
+  supersedesId: string | null;
+  contentHash: string | null;
+  source: string | null;
+  sourceRef: string | null;
+  ingestBatch: string | null;
+  metadata: Record<string, unknown>;
+  orgId: string | null;
+  projectId: string | null;
+  linkId: string | null;
+  title: string;
+  originalFilename: string;
+  fileSize: number;
+  documentType: string;
+  shareUrl: string | null;
+  dashboardUrl: string;
+}
+
+export interface LandResult {
+  ok: boolean;
+  file: string;
+  deduplicated?: boolean;
+  proposal?: LandedProposal;
+  baseline?: { status: 'succeeded' | 'failed' | 'skipped'; jobId: string; pageCount?: number; charCount?: number; reason?: string; error?: string } | null;
+  error?: string;
+}
+
+export interface LandResponse {
+  ok: true;
+  ingestBatch: string;
+  counts: { files: number; landed: number; deduplicated: number; failed: number };
+  results: LandResult[];
+}
+
+export interface DescriptorsResponse {
+  ok: true;
+  descriptors: Array<{ id: string; page: number; kind: string; producer: string; producerVersion: string; payload: unknown; updatedAt: string }>;
+}
+
+export interface JobsResponse {
+  ok: true;
+  jobs: Array<{ id: string; kind: string; status: string; attempt: number; worker: string | null; workerVersion: string | null; error: string | null; detail: unknown; queuedAt: string; startedAt: string | null; finishedAt: string | null }>;
+}
+
 export interface LinkResponse {
   ok: true;
   link: {

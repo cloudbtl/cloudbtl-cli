@@ -256,6 +256,132 @@ export async function cmdImageAdd(file: string, opts: { public?: boolean }): Pro
   await fsAccess(file).catch(() => {
     throw new Error(`File not found: ${file}`);
   });
+  return cmdImageAddInner(file, opts);
+}
+
+// ── 원천층 랜딩: 여러 파일을 한 번에, 링크 없이, dedupe 로. 스크립트·에이전트의 "마구 던지는" 입구. ──
+export async function cmdLand(
+  files: string[],
+  opts: {
+    source?: string;
+    batch?: string;
+    meta?: string;
+    project?: string;
+    description?: string;
+    ref?: string[];
+    link?: boolean;
+    noDedupe?: boolean;
+    noBaseline?: boolean;
+  },
+): Promise<void> {
+  if (files.length === 0) throw new Error('At least one file is required.');
+  for (const f of files) {
+    await fsAccess(f).catch(() => {
+      throw new Error(`File not found: ${f}`);
+    });
+  }
+  let metadata: Record<string, unknown> | undefined;
+  if (opts.meta) {
+    try {
+      const parsed = JSON.parse(opts.meta);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error();
+      metadata = parsed;
+    } catch {
+      throw new Error('--meta must be a JSON object, e.g. \'{"division":"LM","doc_type":"proposal"}\'');
+    }
+  }
+  if (opts.ref && opts.ref.length !== files.length) {
+    throw new Error(`--ref count (${opts.ref.length}) must match file count (${files.length})`);
+  }
+  const api = apiFor(await loadConfig());
+  const res = await api.land(files, {
+    source: opts.source,
+    sourceRefs: opts.ref,
+    ingestBatch: opts.batch,
+    metadata,
+    projectCode: opts.project,
+    description: opts.description,
+    link: opts.link,
+    dedupe: !opts.noDedupe,
+    runBaseline: !opts.noBaseline,
+  });
+  emit(res, () => {
+    const c = res.counts;
+    console.log(
+      ok('✓ Landed') +
+        ` ${bold(String(c.landed))} new` +
+        (c.deduplicated ? dim(`, ${c.deduplicated} deduplicated`) : '') +
+        (c.failed ? err(` , ${c.failed} failed`) : '') +
+        dim(`  batch=${res.ingestBatch}`),
+    );
+    for (const r of res.results) {
+      if (!r.ok) {
+        console.log(`  ${err('✗')} ${r.file}  ${dim(r.error ?? 'failed')}`);
+        continue;
+      }
+      const p = r.proposal!;
+      const base = r.baseline
+        ? r.baseline.status === 'succeeded'
+          ? dim(`text ${r.baseline.pageCount ?? '?'}p/${r.baseline.charCount ?? '?'}ch`)
+          : r.baseline.status === 'skipped'
+            ? dim(`no baseline (${r.baseline.reason ?? 'skipped'})`)
+            : warn(`baseline failed: ${r.baseline.error ?? ''}`)
+        : r.deduplicated
+          ? dim('already landed — same bytes')
+          : dim('baseline queued');
+      console.log(`  ${r.deduplicated ? dim('=') : ok('+')} ${r.file}  ${dim(p.id)} v${p.version}  ${base}`);
+    }
+  });
+}
+
+export async function cmdDescriptors(idOrIndex: string, opts: { kind?: string; producer?: string; page?: string }): Promise<void> {
+  const config = await loadConfig();
+  const id = resolveDocId(config, idOrIndex);
+  const api = apiFor(config);
+  const res = await api.descriptors(id, { kind: opts.kind, producer: opts.producer, page: opts.page !== undefined ? Number(opts.page) : undefined });
+  emit(res, () => {
+    if (res.descriptors.length === 0) {
+      console.log(dim('No descriptors yet.'));
+      return;
+    }
+    console.log(
+      table(
+        ['PAGE', 'KIND', 'PRODUCER', 'VERSION', 'PAYLOAD'],
+        res.descriptors.map((d) => {
+          const s = JSON.stringify(d.payload);
+          return [String(d.page), d.kind, d.producer, d.producerVersion, s.length > 80 ? s.slice(0, 77) + '…' : s];
+        }),
+      ),
+    );
+  });
+}
+
+export async function cmdJobs(idOrIndex: string): Promise<void> {
+  const config = await loadConfig();
+  const id = resolveDocId(config, idOrIndex);
+  const api = apiFor(config);
+  const res = await api.jobs(id);
+  emit(res, () => {
+    if (res.jobs.length === 0) {
+      console.log(dim('No processing jobs.'));
+      return;
+    }
+    console.log(
+      table(
+        ['KIND', 'STATUS', 'ATTEMPT', 'WORKER', 'FINISHED', 'ERROR'],
+        res.jobs.map((j) => [j.kind, j.status, String(j.attempt), j.worker ? `${j.worker}@${j.workerVersion ?? '?'}` : '', j.finishedAt ? fmtDate(j.finishedAt) : '', j.error ?? '']),
+      ),
+    );
+  });
+}
+
+/** 랜딩 문서는 링크가 없어 로컬 추적 목록에 없다 — prop_ id 는 그대로, 아니면 기존 인덱스/접두 해석. */
+function resolveDocId(config: CliConfig, ref: string): string {
+  if (/^prop_[A-Za-z0-9_-]+$/.test(ref)) return ref;
+  return resolveProposal(config, ref).id;
+}
+
+async function cmdImageAddInner(file: string, opts: { public?: boolean }): Promise<void> {
   const config = await loadConfig();
   const api = apiFor(config);
   const res = await api.uploadAsset(file, { public: opts.public });

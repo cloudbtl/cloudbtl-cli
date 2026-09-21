@@ -4,6 +4,9 @@ import type {
   ApiError,
   AuthResponse,
   CreateProposalResponse,
+  DescriptorsResponse,
+  JobsResponse,
+  LandResponse,
   LinkResponse,
   MeResponse,
   MyProposalsResponse,
@@ -222,6 +225,58 @@ export class Api {
       headers: this.headers(),
     });
     return this.parse<CreateProposalResponse>(res);
+  }
+
+  /**
+   * 원천층 랜딩 — 여러 파일을 한 번에, 링크 없이(기본), 해시 dedupe(기본) 로 던진다.
+   * 서버가 파일별로 baseline 추출(PDF 텍스트·페이지 수 등)까지 돌리고 결과를 항목별로 준다.
+   * 로그인(세션 또는 API 토큰) 필수. source/metadata 는 서버가 해석하지 않는 opaque 값.
+   */
+  async land(
+    filePaths: string[],
+    opts: {
+      source?: string;
+      sourceRefs?: string[];
+      ingestBatch?: string;
+      metadata?: Record<string, unknown>;
+      projectCode?: string;
+      description?: string;
+      link?: boolean; // true 면 공개 링크도 생성(기본 false)
+      dedupe?: boolean; // 기본 true
+      runBaseline?: boolean; // 기본 true
+    } = {},
+  ): Promise<LandResponse> {
+    const form = new FormData();
+    for (const p of filePaths) {
+      const buf = await readFile(p);
+      form.append('files', new Blob([buf], { type: mimeFor(p) }), basename(p));
+    }
+    if (opts.source) form.append('source', opts.source);
+    if (opts.sourceRefs) form.append('sourceRefs', JSON.stringify(opts.sourceRefs));
+    if (opts.ingestBatch) form.append('ingestBatch', opts.ingestBatch);
+    if (opts.metadata) form.append('metadata', JSON.stringify(opts.metadata));
+    if (opts.projectCode) form.append('projectCode', opts.projectCode);
+    if (opts.description) form.append('description', opts.description);
+    if (opts.link) form.append('linkMode', 'public');
+    if (opts.dedupe === false) form.append('dedupe', 'false');
+    if (opts.runBaseline === false) form.append('runBaseline', 'false');
+    const res = await fetch(`${this.base}/api/documents/land`, { method: 'POST', body: form, headers: this.headers() });
+    return this.parse<LandResponse>(res);
+  }
+
+  async descriptors(proposalId: string, filter: { kind?: string; producer?: string; page?: number } = {}): Promise<DescriptorsResponse> {
+    const q = new URLSearchParams();
+    if (filter.kind) q.set('kind', filter.kind);
+    if (filter.producer) q.set('producer', filter.producer);
+    if (filter.page !== undefined) q.set('page', String(filter.page));
+    const qs = q.toString();
+    const res = await fetch(`${this.base}/api/proposals/${proposalId}/descriptors${qs ? '?' + qs : ''}`, { headers: this.headers() });
+    return this.parse<DescriptorsResponse>(res);
+  }
+
+  async jobs(proposalId: string): Promise<JobsResponse> {
+    const res = await fetch(`${this.base}/api/proposals/${proposalId}/jobs`, { headers: this.headers() });
+    return this.parse<JobsResponse>(res);
   }
 
   /** 이미지 에셋 업로드(Pro+ 워크스페이스) → 공개 hosted URL. base64 인라인 대체. */

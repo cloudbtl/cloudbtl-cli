@@ -14,6 +14,9 @@ import {
   cmdRm,
   cmdStats,
   cmdUpload,
+  cmdLand,
+  cmdDescriptors,
+  cmdJobs,
   cmdImageAdd,
   cmdWhoami,
   cmdTokenCreate,
@@ -76,6 +79,36 @@ program
   .option('-p, --passcode <code>', 'passcode (for --access passcode, or org fallback)')
   .option('--download', 'allow recipients to download the file', false)
   .action(cmdUpload);
+
+program
+  .command('land')
+  .description('Land many files at once into the workspace library: no share link, sha256 dedupe, baseline text extraction. For scripts/agents (login or API token required).')
+  .argument('<files...>', 'paths to any files (PDF/HTML/MD get text extracted; others are stored and left to external enrichers)')
+  .option('-s, --source <name>', "where these came from, e.g. onedrive, openclaw (opaque; stored verbatim)")
+  .option('-b, --batch <id>', 'ingest batch id (default: server-generated)')
+  .option('-m, --meta <json>', 'metadata JSON object attached to every file, e.g. \'{"division":"LM"}\'')
+  .option('--ref <ref...>', 'per-file source refs (paths/ids in the source system), same order and count as files')
+  .option('--project <code>', 'group under a project (subdomain workspaces only)')
+  .option('--description <text>', 'description shown on the share landing (if a link is later created)')
+  .option('--link', 'also create a public share link per file (default: none)', false)
+  .option('--no-dedupe', 'always create a new document even if the same bytes already exist')
+  .option('--no-baseline', 'skip inline baseline extraction (leave the job queued for /pipeline/drain)')
+  .action(cmdLand);
+
+program
+  .command('descriptors')
+  .description('List derived descriptors (text pages, metadata, enricher outputs) for a document')
+  .argument('<id>', 'document id (prop_…) or tracked index')
+  .option('-k, --kind <kind>', 'filter by kind, e.g. text.page, doc.meta')
+  .option('--producer <name>', 'filter by producer, e.g. cloudbtl-baseline')
+  .option('--page <n>', 'filter by page (0 = document level)')
+  .action(cmdDescriptors);
+
+program
+  .command('jobs')
+  .description('Show the processing ledger (baseline extraction, external enrichment) for a document')
+  .argument('<id>', 'document id (prop_…) or tracked index')
+  .action(cmdJobs);
 
 const image = program.command('image').description('Host images for use in HTML documents (Pro workspace)');
 image
