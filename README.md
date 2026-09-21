@@ -17,8 +17,8 @@ npm link          # makes `cloudbtl` available globally
 ## Login (optional, for account-wide management)
 
 ```bash
-cloudbtl login --google     # sign in with Google in the browser (recommended)
-cloudbtl login              # or email + password (password accounts only)
+cloudbtl login              # sign in with Google in the browser (recommended)
+cloudbtl login --basic      # email + password (password accounts only)
 cloudbtl whoami
 cloudbtl logout
 ```
@@ -28,7 +28,7 @@ of your documents by id — no per-document key needed. Without logging in, the 
 works anonymously: `upload` returns a key it stores locally, and `ls` shows only the
 documents this CLI uploaded.
 
-- `--google` opens a browser, you pick your Google account, and the CLI captures the
+- `login` opens a browser, you pick your Google account, and the CLI captures the
   session. It serves a one-page sign-in on `http://localhost:5173` (an authorized origin
   on the cloudbtl OAuth client). Set `CLOUDBTL_OAUTH_PORT` to use a different (authorized)
   port, or `CLOUDBTL_NO_BROWSER=1` to print the URL instead of auto-opening.
@@ -65,7 +65,7 @@ For environments without a browser (LLM agents, CI), use a personal API token:
 
 ```bash
 # once, on a machine where you CAN log in with the browser:
-cloudbtl login --google
+cloudbtl login
 cloudbtl token create -n my-agent      # prints cbtl_… secret ONCE
 
 # on the headless machine:
@@ -100,7 +100,7 @@ organization workspace, point the CLI at the tenant's host first — its subdoma
 
 ```bash
 cloudbtl config --api-base https://acme.cloudbtl.com   # or the org's custom domain
-cloudbtl login --google                                # must be an org member
+cloudbtl login                                         # must be an org member
 cloudbtl upload deck.pdf -t "Q3 Proposal" --project P2026-01
 ```
 
@@ -115,7 +115,7 @@ cloudbtl upload deck.pdf -t "Q3 Proposal" --project P2026-01
 | Command | Description |
 |---|---|
 | `upload <file>` | Upload a PDF/HTML/MD/PPTX doc and create its first link |
-| `land <files...>` | Land many files into the workspace library: no share link, sha256 dedupe, baseline text extraction (see below) |
+| `land <files...>` | Land files or directory trees with sha256 dedupe, manifests, resume and automatic batching (see below) |
 | `descriptors <doc>` | Derived descriptors for a document (built-in text pages, enricher outputs) |
 | `jobs <doc>` | Processing ledger for a document (baseline extraction, external enrichment) |
 | `ls` | List locally-tracked documents |
@@ -137,20 +137,34 @@ no share link is created (unless `--link`), identical bytes in the same workspac
 HTML/Markdown text, page count) so the response already tells you what it read.
 
 ```bash
-cloudbtl login --token cbtl_…                       # or a browser login
-cloudbtl config --api-base https://acme.cloudbtl.com  # the workspace the files belong to
+cloudbtl login --token cbtl_…
+cloudbtl config --api-base https://acme.cloudbtl.com
 
-cloudbtl land ./folder/*.pdf ./folder/*.md \
-  -s onedrive \                                      # where they came from (opaque tag)
-  --ref 'LM/#240408/a.pdf' 'LM/#240408/b.pdf' 'LM/#240408/c.md' \   # one per file, same order
-  -m '{"division":"LM","project_folder":"#240408"}' \               # attached to every file (opaque JSON)
-  -b onedrive-2026-09-21                              # batch id for auditing / reprocessing
+# Inspect a tree without uploading. Include/exclude patterns match paths and filenames.
+cloudbtl land ./OneDrive --recursive \
+  --include '*.pdf,*.pptx,*.docx,*.xlsx' \
+  --exclude '~$*,.DS_Store' \
+  --ref-from-path ./OneDrive \
+  --dry-run
 
-cloudbtl descriptors prop_… -k text.page             # what the baseline read
-cloudbtl jobs prop_…                                 # ledger: extract.baseline / enrich.<producer>
+# Run it. The JSONL manifest records every result; rerunning skips successful paths.
+cloudbtl land ./OneDrive --recursive \
+  --exclude '~$*,.DS_Store' \
+  --source onedrive \
+  --ref-from-path ./OneDrive \
+  --manifest ./onedrive-land.jsonl \
+  --concurrency 3
+
+# Optional: derive per-file metadata from its relative source path.
+cloudbtl land ./OneDrive --recursive \
+  --ref-from-path ./OneDrive \
+  --meta-from-path '^(?<division>[^/]+)/(?<year>20[0-9]{2})/' \
+  --manifest ./onedrive-land.jsonl
+
+cloudbtl descriptors prop_… -k text.page
+cloudbtl jobs prop_…
 ```
 
-Limits: 50 files × 50 MB per call. Use `--no-baseline` for very large corpora and drain later with
-`POST /api/pipeline/drain`. Office formats and scanned PDFs are stored but left to external enrichers
-(the job shows `skipped`). Full contract, webhooks and the enricher/consumer guides:
-`cloudbtl-site/docs/spec/landing-layer.md`.
+`land` hashes files locally, removes local duplicates, groups small files into requests of at most 50 files and 25 MB, and sends files of 25 MB or more directly to storage (up to the server's 2 GiB limit). HTTP 429 responses honor `Retry-After` and back off automatically. A stopped run resumes from entries marked `landed` or `deduplicated` in the manifest; failed entries are retried.
+
+Use `--no-baseline` for very large corpora and drain later with `POST /api/pipeline/drain`. Full contract, webhooks and the enricher/consumer guides live in `cloudbtl-site/docs/spec/landing-layer.md`.

@@ -1,11 +1,13 @@
+import { createReadStream } from 'node:fs';
 import { basename, extname } from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import type {
   ApiError,
   AuthResponse,
   CreateProposalResponse,
   DescriptorsResponse,
   JobsResponse,
+  LandResult,
   LandResponse,
   LinkResponse,
   MeResponse,
@@ -19,6 +21,7 @@ export class ApiClientError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly retryAfterMs?: number,
   ) {
     super(message);
   }
@@ -123,6 +126,14 @@ function errorMessage(data: unknown, status: number): string {
   return `Request failed (HTTP ${status})`;
 }
 
+function retryAfterMs(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now());
+}
+
 export class Api {
   constructor(
     private readonly base: string,
@@ -205,7 +216,7 @@ export class Api {
 
   private async parse<T>(res: Response): Promise<T> {
     const data = await res.json().catch(() => null);
-    if (!res.ok) throw new ApiClientError(res.status, errorMessage(data, res.status));
+    if (!res.ok) throw new ApiClientError(res.status, errorMessage(data, res.status), retryAfterMs(res.headers.get('retry-after')));
     return data as T;
   }
 
@@ -262,6 +273,64 @@ export class Api {
     if (opts.runBaseline === false) form.append('runBaseline', 'false');
     const res = await fetch(`${this.base}/api/documents/land`, { method: 'POST', body: form, headers: this.headers() });
     return this.parse<LandResponse>(res);
+  }
+
+  async landDirect(
+    filePath: string,
+    opts: {
+      source?: string;
+      sourceRef?: string;
+      ingestBatch?: string;
+      metadata?: Record<string, unknown>;
+      projectCode?: string;
+      description?: string;
+      link?: boolean;
+      dedupe?: boolean;
+      runBaseline?: boolean;
+    } = {},
+  ): Promise<LandResult> {
+    const info = await stat(filePath);
+    const init = await this.parse<{ ok: true; uploadId: string; uploadUrl: string }>(
+      await fetch(`${this.base}/api/documents/land/init`, {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ filename: basename(filePath), size: info.size }),
+      }),
+    );
+    const body = createReadStream(filePath);
+    const upload = await fetch(init.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(info.size) },
+      body: body as unknown as RequestInit['body'],
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+    if (!upload.ok) throw new ApiClientError(upload.status, `Direct storage upload failed (HTTP ${upload.status})`);
+    const commitBody = JSON.stringify({
+      uploadId: init.uploadId,
+      source: opts.source,
+      sourceRef: opts.sourceRef,
+      ingestBatch: opts.ingestBatch,
+      metadata: opts.metadata,
+      projectCode: opts.projectCode,
+      description: opts.description,
+      linkMode: opts.link ? 'public' : 'none',
+      dedupe: opts.dedupe ?? true,
+      runBaseline: opts.runBaseline ?? true,
+    });
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.parse<LandResult>(
+          await fetch(`${this.base}/api/documents/land/commit`, {
+            method: 'POST',
+            headers: this.headers({ 'Content-Type': 'application/json' }),
+            body: commitBody,
+          }),
+        );
+      } catch (error) {
+        if (!(error instanceof ApiClientError) || error.status !== 429 || attempt >= 7) throw error;
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, Math.min(60_000, error.retryAfterMs ?? 1000 * 2 ** attempt)));
+      }
+    }
   }
 
   async descriptors(proposalId: string, filter: { kind?: string; producer?: string; page?: number } = {}): Promise<DescriptorsResponse> {

@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
-import { access as fsAccess } from 'node:fs/promises';
+import { access as fsAccess, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import readline from 'node:readline';
 import {
   Api,
+  ApiClientError,
   type AccessConfig,
   type Folder,
   type OrgSummary,
@@ -11,6 +13,7 @@ import {
   type OrgProposal,
   type AuditEntry,
 } from './api.js';
+import type { LandResult } from './types.js';
 import {
   type CliConfig,
   DEFAULT_GOOGLE_CLIENT_ID,
@@ -24,7 +27,23 @@ import {
   setToken,
 } from './config.js';
 import { googleLogin } from './google-login.js';
-import { accessLabel, bold, dim, emit, err, fmtDate, fmtMs, ok, table, warn } from './format.js';
+import { accessLabel, bold, dim, emit, err, fmtDate, fmtMs, isJson, ok, table, warn } from './format.js';
+import {
+  DIRECT_UPLOAD_THRESHOLD,
+  appendManifest,
+  expandInputs,
+  makeBatchId,
+  mapLimit,
+  metadataFromPath,
+  multipartGroups,
+  readManifest,
+  sha256,
+  sourceRefFor,
+  successfulManifestHashes,
+  successfulManifestPaths,
+  type LandCandidate,
+  type ManifestEntry,
+} from './land-bulk.js';
 
 export interface AccessOpts {
   access?: string;
@@ -97,6 +116,10 @@ function pickDoc(list: DocRef[], ref: string): DocRef {
 }
 
 async function resolveDoc(config: CliConfig, api: Api, ref: string): Promise<DocRef> {
+  const hasServerAuth = Boolean(config.session || config.token || process.env.CLOUDBTL_TOKEN);
+  if (hasServerAuth && /^prop_[A-Za-z0-9_-]+$/.test(ref)) {
+    return { id: ref, ownerKey: '', title: ref, dashboardUrl: '' };
+  }
   return pickDoc(await listDocs(config, api), ref);
 }
 
@@ -272,66 +295,212 @@ export async function cmdLand(
     link?: boolean;
     noDedupe?: boolean;
     noBaseline?: boolean;
+    recursive?: boolean;
+    include?: string;
+    exclude?: string;
+    refFromPath?: string;
+    metaFromPath?: string;
+    manifest?: string;
+    dryRun?: boolean;
+    concurrency?: string;
   },
 ): Promise<void> {
   if (files.length === 0) throw new Error('At least one file is required.');
-  for (const f of files) {
-    await fsAccess(f).catch(() => {
-      throw new Error(`File not found: ${f}`);
-    });
-  }
-  let metadata: Record<string, unknown> | undefined;
+  let baseMetadata: Record<string, unknown> = {};
   if (opts.meta) {
     try {
       const parsed = JSON.parse(opts.meta);
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error();
-      metadata = parsed;
+      baseMetadata = parsed;
     } catch {
       throw new Error('--meta must be a JSON object, e.g. \'{"division":"LM","doc_type":"proposal"}\'');
     }
   }
-  if (opts.ref && opts.ref.length !== files.length) {
-    throw new Error(`--ref count (${opts.ref.length}) must match file count (${files.length})`);
+  const concurrency = Number(opts.concurrency ?? 3);
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) {
+    throw new Error('--concurrency must be an integer from 1 to 16.');
   }
-  const api = apiFor(await loadConfig());
-  const res = await api.land(files, {
-    source: opts.source,
-    sourceRefs: opts.ref,
-    ingestBatch: opts.batch,
-    metadata,
-    projectCode: opts.project,
-    description: opts.description,
-    link: opts.link,
-    dedupe: !opts.noDedupe,
-    runBaseline: !opts.noBaseline,
+  const expanded = await expandInputs(files, opts);
+  if (expanded.length === 0) throw new Error('No files matched the include/exclude filters.');
+  if (opts.ref && opts.ref.length !== expanded.length) {
+    throw new Error(`--ref count (${opts.ref.length}) must match expanded file count (${expanded.length})`);
+  }
+  if (opts.ref && opts.refFromPath) throw new Error('Use either --ref or --ref-from-path, not both.');
+
+  const previous = await readManifest(opts.manifest);
+  const completedPaths = successfulManifestPaths(previous);
+  const completedHashes = successfulManifestHashes(previous);
+  const resumed = expanded.filter((path) => completedPaths.has(resolve(path))).length;
+  const pendingPaths = expanded.filter((path) => !completedPaths.has(resolve(path)));
+  const candidates = await mapLimit(pendingPaths, concurrency, async (path, index): Promise<LandCandidate> => {
+    const info = await stat(path);
+    const sourceRef = opts.ref?.[expanded.indexOf(path)] ?? sourceRefFor(path, opts.refFromPath);
+    return {
+      path,
+      size: info.size,
+      sha256: await sha256(path),
+      sourceRef,
+      metadata: { ...baseMetadata, ...metadataFromPath(opts.metaFromPath, sourceRef) },
+    };
   });
-  emit(res, () => {
-    const c = res.counts;
-    console.log(
-      ok('✓ Landed') +
-        ` ${bold(String(c.landed))} new` +
-        (c.deduplicated ? dim(`, ${c.deduplicated} deduplicated`) : '') +
-        (c.failed ? err(` , ${c.failed} failed`) : '') +
-        dim(`  batch=${res.ingestBatch}`),
+
+  const unique: LandCandidate[] = [];
+  const duplicateEntries: ManifestEntry[] = [];
+  const seenHashes = new Set(completedHashes);
+  for (const candidate of candidates) {
+    if (!opts.noDedupe && seenHashes.has(candidate.sha256)) {
+      duplicateEntries.push({
+        path: candidate.path,
+        size: candidate.size,
+        sha256: candidate.sha256,
+        deduplicated: true,
+        status: 'local_duplicate',
+        at: new Date().toISOString(),
+      });
+    } else {
+      unique.push(candidate);
+      seenHashes.add(candidate.sha256);
+    }
+  }
+
+  const totalBytes = unique.reduce((sum, candidate) => sum + candidate.size, 0);
+  const batch = makeBatchId(opts.batch);
+  if (opts.dryRun) {
+    emit(
+      { ok: true, dryRun: true, batch, files: expanded.length, ready: unique.length, resumed, localDuplicates: duplicateEntries.length, bytes: totalBytes },
+      () => console.log(`${bold(String(unique.length))} files ready · ${fmtBytes(totalBytes)} · ${resumed} resumed · ${duplicateEntries.length} local duplicates`),
     );
-    for (const r of res.results) {
-      if (!r.ok) {
-        console.log(`  ${err('✗')} ${r.file}  ${dim(r.error ?? 'failed')}`);
-        continue;
+    return;
+  }
+
+  for (const entry of duplicateEntries) await appendManifest(opts.manifest, entry);
+  const api = apiFor(await loadConfig());
+  const metadataBuckets = new Map<string, LandCandidate[]>();
+  for (const candidate of unique.filter((item) => item.size < DIRECT_UPLOAD_THRESHOLD)) {
+    const key = JSON.stringify(candidate.metadata);
+    metadataBuckets.set(key, [...(metadataBuckets.get(key) ?? []), candidate]);
+  }
+  const jobs: Array<{ kind: 'multipart' | 'direct'; candidates: LandCandidate[] }> = [];
+  for (const bucket of metadataBuckets.values()) {
+    for (const group of multipartGroups(bucket)) jobs.push({ kind: 'multipart', candidates: group });
+  }
+  for (const candidate of unique.filter((item) => item.size >= DIRECT_UPLOAD_THRESHOLD)) {
+    jobs.push({ kind: 'direct', candidates: [candidate] });
+  }
+
+  const started = Date.now();
+  let processed = 0;
+  let processedBytes = 0;
+  let landed = 0;
+  let deduplicated = duplicateEntries.length;
+  let failed = 0;
+  const results: Array<{ path: string; result: LandResult }> = [];
+  let manifestWrites = Promise.resolve();
+  const record = (entry: ManifestEntry) => {
+    manifestWrites = manifestWrites.then(() => appendManifest(opts.manifest, entry));
+    return manifestWrites;
+  };
+  const report = () => {
+    if (isJson()) return;
+    const elapsed = Math.max(1, (Date.now() - started) / 1000);
+    process.stderr.write(`\r${processed}/${unique.length} · ${fmtBytes(processedBytes)} · ${fmtBytes(processedBytes / elapsed)}/s · ${failed} failed`);
+  };
+
+  await mapLimit(jobs, concurrency, async (job) => {
+    let jobResults: LandResult[];
+    try {
+      jobResults = await with429Retry(async () => {
+        if (job.kind === 'direct') {
+          const candidate = job.candidates[0]!;
+          return [await api.landDirect(candidate.path, {
+            source: opts.source,
+            sourceRef: candidate.sourceRef,
+            ingestBatch: batch,
+            metadata: candidate.metadata,
+            projectCode: opts.project,
+            description: opts.description,
+            link: opts.link,
+            dedupe: !opts.noDedupe,
+            runBaseline: !opts.noBaseline,
+          })];
+        }
+        const response = await api.land(job.candidates.map((item) => item.path), {
+          source: opts.source,
+          sourceRefs: job.candidates.map((item) => item.sourceRef),
+          ingestBatch: batch,
+          metadata: job.candidates[0]?.metadata,
+          projectCode: opts.project,
+          description: opts.description,
+          link: opts.link,
+          dedupe: !opts.noDedupe,
+          runBaseline: !opts.noBaseline,
+        });
+        return response.results;
+      });
+    } catch (error) {
+      jobResults = job.candidates.map((candidate) => ({ ok: false, file: candidate.path, error: (error as Error).message }));
+    }
+
+    for (let i = 0; i < job.candidates.length; i += 1) {
+      const candidate = job.candidates[i]!;
+      const result = jobResults[i] ?? { ok: false, file: candidate.path, error: 'Server returned no result for this file.' };
+      results.push({ path: candidate.path, result });
+      processed += 1;
+      processedBytes += candidate.size;
+      if (result.ok && result.proposal) {
+        if (result.deduplicated) deduplicated += 1;
+        else landed += 1;
+        await record({
+          path: candidate.path,
+          size: candidate.size,
+          sha256: candidate.sha256,
+          proposalId: result.proposal.id,
+          deduplicated: Boolean(result.deduplicated),
+          status: result.deduplicated ? 'deduplicated' : 'landed',
+          at: new Date().toISOString(),
+        });
+      } else {
+        failed += 1;
+        await record({ path: candidate.path, size: candidate.size, sha256: candidate.sha256, status: 'failed', error: result.error ?? 'failed', at: new Date().toISOString() });
       }
-      const p = r.proposal!;
-      const base = r.baseline
-        ? r.baseline.status === 'succeeded'
-          ? dim(`text ${r.baseline.pageCount ?? '?'}p/${r.baseline.charCount ?? '?'}ch`)
-          : r.baseline.status === 'skipped'
-            ? dim(`no baseline (${r.baseline.reason ?? 'skipped'})`)
-            : warn(`baseline failed: ${r.baseline.error ?? ''}`)
-        : r.deduplicated
-          ? dim('already landed — same bytes')
-          : dim('baseline queued');
-      console.log(`  ${r.deduplicated ? dim('=') : ok('+')} ${r.file}  ${dim(p.id)} v${p.version}  ${base}`);
+      report();
     }
   });
+  await manifestWrites;
+  if (!isJson() && unique.length) process.stderr.write('\n');
+
+  const summary = {
+    ok: failed === 0,
+    batch,
+    counts: { files: expanded.length, attempted: unique.length, landed, deduplicated, resumed, failed },
+    bytes: processedBytes,
+    elapsedMs: Date.now() - started,
+    manifest: opts.manifest ? resolve(opts.manifest) : null,
+    results,
+  };
+  emit(summary, () => {
+    console.log(`${failed ? warn('Finished') : ok('✓ Landed')} ${bold(String(landed))} new, ${deduplicated} deduplicated, ${resumed} resumed, ${failed} failed ${dim(`batch=${batch}`)}`);
+  });
+}
+
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${Math.round(bytes)}B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)}KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)}MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)}GB`;
+}
+
+async function with429Retry<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!(error instanceof ApiClientError) || error.status !== 429 || attempt >= 7) throw error;
+      const delay = Math.min(60_000, error.retryAfterMs ?? 1000 * 2 ** attempt);
+      if (!isJson()) process.stderr.write(`\nRate limited; retrying in ${Math.ceil(delay / 1000)}s…\n`);
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
+    }
+  }
 }
 
 export async function cmdDescriptors(idOrIndex: string, opts: { kind?: string; producer?: string; page?: string }): Promise<void> {
