@@ -34,6 +34,16 @@ export interface AccessConfig {
   allowDownload?: boolean;
 }
 
+export interface SearchResponse {
+  ok: boolean;
+  query: string;
+  matching: 'all_keywords';
+  order: 'descriptor_id';
+  results: Array<{ descriptorId: string; documentId: string; title: string; sourceRef: string | null;
+    contentHash: string | null; page: number; kind: string; producer: string; producerVersion: string; snippet: string }>;
+  nextCursor: string | null;
+}
+
 function mimeFor(file: string): string {
   const ext = extname(file).toLowerCase();
   if (ext === '.pdf') return 'application/pdf';
@@ -331,6 +341,16 @@ export class Api {
         await new Promise((resolveDelay) => setTimeout(resolveDelay, Math.min(60_000, error.retryAfterMs ?? 1000 * 2 ** attempt)));
       }
     }
+  }
+
+  async search(query: string, opts: { kind?: string; producer?: string; limit?: string; cursor?: string; tree?: string; node?: string } = {}): Promise<SearchResponse> {
+    if (opts.node && !opts.tree) throw new Error('--node requires --tree');
+    const params = new URLSearchParams({ q: query });
+    for (const key of ['kind', 'producer', 'limit', 'cursor'] as const) if (opts[key]) params.set(key, opts[key]!);
+    const path = opts.tree
+      ? `/api/trees/${encodeURIComponent(opts.tree)}/nodes/${encodeURIComponent(opts.node ?? 'root')}/search`
+      : '/api/search';
+    return this.parse<SearchResponse>(await fetch(`${this.base}${path}?${params}`, { headers: this.headers() }));
   }
 
   async descriptors(proposalId: string, filter: { kind?: string; producer?: string; page?: number } = {}): Promise<DescriptorsResponse> {

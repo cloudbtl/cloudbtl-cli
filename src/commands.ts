@@ -503,6 +503,20 @@ async function with429Retry<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+export async function cmdSearch(query: string, opts: { kind?: string; producer?: string; limit?: string; cursor?: string; tree?: string; node?: string }): Promise<void> {
+  const api = apiFor(await loadConfig());
+  const result = await api.search(query, opts);
+  emit(result, () => {
+    for (const hit of result.results) {
+      console.log(bold(hit.title) + ` (${hit.documentId}, page ${hit.page})`);
+      console.log(dim(`${hit.sourceRef ?? ''} · ${hit.kind} · ${hit.producer}`));
+      console.log(hit.snippet + '\n');
+    }
+    if (!result.results.length) console.log(dim('No matching extracted text. Unprocessed files are not searched.'));
+    if (result.nextCursor) console.log(dim(`More results: repeat with --cursor ${result.nextCursor}`));
+  });
+}
+
 export async function cmdDescriptors(idOrIndex: string, opts: { kind?: string; producer?: string; page?: string }): Promise<void> {
   const config = await loadConfig();
   const id = resolveDocId(config, idOrIndex);

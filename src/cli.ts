@@ -16,6 +16,7 @@ import {
   cmdUpload,
   cmdLand,
   cmdDescriptors,
+  cmdSearch,
   cmdJobs,
   cmdImageAdd,
   cmdWhoami,
@@ -55,6 +56,17 @@ program
 
 const accessHelp =
   'access mode: public | passcode | org (org needs --domains; passcode needs --passcode)';
+
+program.command('search')
+  .description('Search extracted body text and document/page cards (all keywords must match)')
+  .argument('<query>', 'keywords, e.g. "임대료 조건"')
+  .option('--kind <kind>', 'text.page | card.doc | card.page')
+  .option('--producer <producer>', 'descriptor producer')
+  .option('--limit <count>', 'results per page (1–100)', '20')
+  .option('--cursor <cursor>', 'continue a previous search')
+  .option('--tree <tree>', 'search a logical tree by id or key')
+  .option('--node <node>', 'search this node and descendants (requires --tree; default root)')
+  .action(cmdSearch);
 
 program
   .command('login')

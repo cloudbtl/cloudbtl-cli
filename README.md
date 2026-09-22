@@ -129,6 +129,18 @@ cloudbtl open 1
 
 Document references accept a full ID, a unique ID prefix, or a one-based index from `cloudbtl ls`.
 
+## Body search (development)
+
+The `search` command requires an API with descriptor search deployed; older servers return 404.
+
+```bash
+cloudbtl search "임대료 조건"
+cloudbtl --json search "lease rent" --kind text.page --limit 20
+cloudbtl search "임대료" --tree folders --node node_example
+```
+
+Every keyword must occur in the same extracted page or document card. Results include the document ID, page, source path, producer and a text excerpt. `--cursor` continues the same query. Results use stable ID order, not relevance ranking; unprocessed files and folder summaries are not searched. Workspace and document access are enforced by the API.
+
 ## Authentication
 
 Interactive login opens a browser:
@@ -168,6 +180,7 @@ The CLI uses the selected host for workspace membership, folders, projects, and 
 | Authentication | `login`, `logout`, `whoami`, `token create/ls/rm` |
 | Intake | `upload`, `land`, `claim` |
 | Processing | `descriptors`, `jobs` |
+| Retrieval | `search` (requires descriptor-search API) |
 | Documents | `ls`, `open`, `rm` |
 | Sharing | `links`, `link add`, `link rm`, `stats` |
 | Workspace | `folder …`, `org …`, `image add` |
